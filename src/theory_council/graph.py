@@ -3,18 +3,30 @@ LangGraph state and node definitions for the Theory Council workflow.
 """
 from __future__ import annotations
 
-from typing import Any, Optional, TypedDict
+from typing import Any, Dict, Optional, TypedDict
 
 from langgraph.graph import END, StateGraph
 
 from .config import get_integrator_llm, get_llm
 from .personas import (
+    DEBATE_MODERATOR_SYSTEM_PROMPT,
+    ENV_IMPL_AGENT_SYSTEM_PROMPT,
+    IM_ANCHOR_SYSTEM_PROMPT,
     INTEGRATOR_SYSTEM_PROMPT,
-    PROBLEM_FRAMER_PROMPT,
+    RA_AGENT_SYSTEM_PROMPT,
     SCT_AGENT_SYSTEM_PROMPT,
     SDT_AGENT_SYSTEM_PROMPT,
+    THEORY_SELECTOR_SYSTEM_PROMPT,
     WISE_AGENT_SYSTEM_PROMPT,
 )
+
+THEORY_LABELS = [
+    ("sct", "SCT (Social Cognitive Theory)"),
+    ("sdt", "SDT (Self-Determination Theory)"),
+    ("wise", "Wise / Belonging"),
+    ("ra", "Reasoned Action / Decision"),
+    ("env_impl", "Environment and Implementation"),
+]
 
 
 class CouncilState(TypedDict):
@@ -23,40 +35,45 @@ class CouncilState(TypedDict):
     """
 
     raw_problem: str
-    framed_problem: str
-    sct_output: Optional[str]
-    sdt_output: Optional[str]
-    wise_output: Optional[str]
+    im_summary: Optional[str]
+    theory_outputs: Dict[str, str]
+    debate_summary: Optional[str]
+    theory_ranking: Optional[str]
     final_synthesis: Optional[str]
 
 
-def problem_framer(state: CouncilState) -> CouncilState:
-    """
-    Normalize the raw user input into the structured format the agents expect.
-    """
+def im_anchor_agent(state: CouncilState) -> CouncilState:
     llm = get_llm()
     messages = [
-        {"role": "system", "content": PROBLEM_FRAMER_PROMPT},
+        {"role": "system", "content": IM_ANCHOR_SYSTEM_PROMPT},
         {"role": "user", "content": state["raw_problem"]},
     ]
     response = llm.invoke(messages)
     new_state = dict(state)
-    new_state["framed_problem"] = response.content.strip()
+    new_state["im_summary"] = response.content.strip()
     return new_state  # type: ignore[return-value]
+
+
+def _with_im_context(state: CouncilState) -> str:
+    return (
+        "RAW PROBLEM:\n"
+        f"{state['raw_problem']}\n\n"
+        "IM ANCHOR SUMMARY:\n"
+        f"{state.get('im_summary') or ''}"
+    )
 
 
 def sct_agent(state: CouncilState) -> CouncilState:
     llm = get_llm()
     messages = [
         {"role": "system", "content": SCT_AGENT_SYSTEM_PROMPT},
-        {
-            "role": "user",
-            "content": f"Here is the structured problem description:\n\n{state['framed_problem']}",
-        },
+        {"role": "user", "content": _with_im_context(state)},
     ]
     response = llm.invoke(messages)
     new_state = dict(state)
-    new_state["sct_output"] = response.content.strip()
+    outputs = dict(state.get("theory_outputs") or {})
+    outputs["sct"] = response.content.strip()
+    new_state["theory_outputs"] = outputs
     return new_state  # type: ignore[return-value]
 
 
@@ -64,14 +81,13 @@ def sdt_agent(state: CouncilState) -> CouncilState:
     llm = get_llm()
     messages = [
         {"role": "system", "content": SDT_AGENT_SYSTEM_PROMPT},
-        {
-            "role": "user",
-            "content": f"Here is the structured problem description:\n\n{state['framed_problem']}",
-        },
+        {"role": "user", "content": _with_im_context(state)},
     ]
     response = llm.invoke(messages)
     new_state = dict(state)
-    new_state["sdt_output"] = response.content.strip()
+    outputs = dict(state.get("theory_outputs") or {})
+    outputs["sdt"] = response.content.strip()
+    new_state["theory_outputs"] = outputs
     return new_state  # type: ignore[return-value]
 
 
@@ -79,32 +95,126 @@ def wise_agent(state: CouncilState) -> CouncilState:
     llm = get_llm()
     messages = [
         {"role": "system", "content": WISE_AGENT_SYSTEM_PROMPT},
+        {"role": "user", "content": _with_im_context(state)},
+    ]
+    response = llm.invoke(messages)
+    new_state = dict(state)
+    outputs = dict(state.get("theory_outputs") or {})
+    outputs["wise"] = response.content.strip()
+    new_state["theory_outputs"] = outputs
+    return new_state  # type: ignore[return-value]
+
+
+def ra_agent(state: CouncilState) -> CouncilState:
+    llm = get_llm()
+    messages = [
+        {"role": "system", "content": RA_AGENT_SYSTEM_PROMPT},
+        {"role": "user", "content": _with_im_context(state)},
+    ]
+    response = llm.invoke(messages)
+    new_state = dict(state)
+    outputs = dict(state.get("theory_outputs") or {})
+    outputs["ra"] = response.content.strip()
+    new_state["theory_outputs"] = outputs
+    return new_state  # type: ignore[return-value]
+
+
+def env_impl_agent(state: CouncilState) -> CouncilState:
+    llm = get_llm()
+    messages = [
+        {"role": "system", "content": ENV_IMPL_AGENT_SYSTEM_PROMPT},
+        {"role": "user", "content": _with_im_context(state)},
+    ]
+    response = llm.invoke(messages)
+    new_state = dict(state)
+    outputs = dict(state.get("theory_outputs") or {})
+    outputs["env_impl"] = response.content.strip()
+    new_state["theory_outputs"] = outputs
+    return new_state  # type: ignore[return-value]
+
+
+def debate_moderator(state: CouncilState) -> CouncilState:
+    llm = get_llm()
+    outputs = state.get("theory_outputs") or {}
+    combined = [
+        f"=== {label} OUTPUT ({key}) ===\n{outputs[key]}"
+        for key, label in THEORY_LABELS
+        if key in outputs
+    ]
+    theories_text = "\n\n".join(combined) if combined else "(no theory outputs)"
+    messages = [
+        {"role": "system", "content": DEBATE_MODERATOR_SYSTEM_PROMPT},
         {
             "role": "user",
-            "content": f"Here is the structured problem description:\n\n{state['framed_problem']}",
+            "content": (
+                "IM ANCHOR SUMMARY:\n"
+                f"{state.get('im_summary') or ''}\n\n"
+                "THEORY AGENT OUTPUTS:\n"
+                f"{theories_text}"
+            ),
         },
     ]
     response = llm.invoke(messages)
     new_state = dict(state)
-    new_state["wise_output"] = response.content.strip()
+    new_state["debate_summary"] = response.content.strip()
+    return new_state  # type: ignore[return-value]
+
+
+def theory_selector(state: CouncilState) -> CouncilState:
+    llm = get_llm()
+    outputs = state.get("theory_outputs") or {}
+    combined = [
+        f"=== {label} OUTPUT ({key}) ===\n{outputs[key]}"
+        for key, label in THEORY_LABELS
+        if key in outputs
+    ]
+    theories_text = "\n\n".join(combined) if combined else "(no theory outputs)"
+    messages = [
+        {"role": "system", "content": THEORY_SELECTOR_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": (
+                "IM ANCHOR SUMMARY:\n"
+                f"{state.get('im_summary') or ''}\n\n"
+                "THEORY AGENT OUTPUTS:\n"
+                f"{theories_text}\n\n"
+                "DEBATE SUMMARY:\n"
+                f"{state.get('debate_summary') or ''}"
+            ),
+        },
+    ]
+    response = llm.invoke(messages)
+    new_state = dict(state)
+    new_state["theory_ranking"] = response.content.strip()
     return new_state  # type: ignore[return-value]
 
 
 def integrator(state: CouncilState) -> CouncilState:
     llm = get_integrator_llm()
-    combined = (
-        "=== Structured Problem ===\n"
-        f"{state.get('framed_problem', '').strip()}\n\n"
-        "=== SCT Agent Output ===\n"
-        f"{state.get('sct_output') or ''}\n\n"
-        "=== SDT Agent Output ===\n"
-        f"{state.get('sdt_output') or ''}\n\n"
-        "=== Wise Agent Output ===\n"
-        f"{state.get('wise_output') or ''}\n"
-    )
+    outputs = state.get("theory_outputs") or {}
+    combined = [
+        f"=== {label} OUTPUT ({key}) ===\n{outputs[key]}"
+        for key, label in THEORY_LABELS
+        if key in outputs
+    ]
+    theories_text = "\n\n".join(combined) if combined else "(no theory outputs)"
     messages = [
         {"role": "system", "content": INTEGRATOR_SYSTEM_PROMPT},
-        {"role": "user", "content": combined},
+        {
+            "role": "user",
+            "content": (
+                "RAW PROBLEM:\n"
+                f"{state['raw_problem']}\n\n"
+                "IM ANCHOR SUMMARY:\n"
+                f"{state.get('im_summary') or ''}\n\n"
+                "THEORY AGENT OUTPUTS:\n"
+                f"{theories_text}\n\n"
+                "DEBATE SUMMARY:\n"
+                f"{state.get('debate_summary') or ''}\n\n"
+                "THEORY RANKING AND DECISION NOTE:\n"
+                f"{state.get('theory_ranking') or ''}"
+            ),
+        },
     ]
     response = llm.invoke(messages)
     new_state = dict(state)
@@ -118,17 +228,25 @@ def build_graph() -> Any:
     """
     graph = StateGraph(CouncilState)
 
-    graph.add_node("problem_framer", problem_framer)
+    graph.add_node("im_anchor", im_anchor_agent)
     graph.add_node("sct_agent", sct_agent)
     graph.add_node("sdt_agent", sdt_agent)
     graph.add_node("wise_agent", wise_agent)
+    graph.add_node("ra_agent", ra_agent)
+    graph.add_node("env_impl_agent", env_impl_agent)
+    graph.add_node("debate_moderator", debate_moderator)
+    graph.add_node("theory_selector", theory_selector)
     graph.add_node("integrator", integrator)
 
-    graph.set_entry_point("problem_framer")
-    graph.add_edge("problem_framer", "sct_agent")
+    graph.set_entry_point("im_anchor")
+    graph.add_edge("im_anchor", "sct_agent")
     graph.add_edge("sct_agent", "sdt_agent")
     graph.add_edge("sdt_agent", "wise_agent")
-    graph.add_edge("wise_agent", "integrator")
+    graph.add_edge("wise_agent", "ra_agent")
+    graph.add_edge("ra_agent", "env_impl_agent")
+    graph.add_edge("env_impl_agent", "debate_moderator")
+    graph.add_edge("debate_moderator", "theory_selector")
+    graph.add_edge("theory_selector", "integrator")
     graph.add_edge("integrator", END)
 
     return graph.compile()
@@ -143,10 +261,14 @@ def get_app() -> Any:
 
 __all__ = [
     "CouncilState",
-    "problem_framer",
+    "im_anchor_agent",
     "sct_agent",
     "sdt_agent",
     "wise_agent",
+    "ra_agent",
+    "env_impl_agent",
+    "debate_moderator",
+    "theory_selector",
     "integrator",
     "build_graph",
     "get_app",

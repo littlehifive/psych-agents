@@ -1,421 +1,476 @@
-# AGENTS.md — Instructions for the Coding Assistant
+# AGENTS.md — Instructions for the Coding Assistant (v2)
 
-You are an AI coding assistant helping build a LOCAL Python demo of a multi-agent "Theory Council" using **LangGraph + LangChain + OpenAI**.
+You are an AI coding assistant helping evolve a LOCAL Python demo of a multi-agent **“Theory Council”** using **LangGraph + LangChain + OpenAI**.
 
-The goal is:
+The user already has a working v1–v1.5 with:
 
-- A small Python project where a user describes a **behavior-change / psychological intervention problem**.
-- A LangGraph workflow routes this problem through several **theory-inspired agents**:
-  - Social Cognitive Theory (Bandura-inspired) agent.
-  - Self-Determination Theory (Deci & Ryan-inspired) agent.
-  - Wise Intervention / Belonging (Walton-inspired) agent.
-- Each agent generates theory-based intervention ideas.
-- An **Integrator agent** synthesizes the proposals into 2–3 concrete intervention packages with mechanisms.
-- Everything runs locally via CLI (no web UI needed for v1), with **optional** tracing/logging to **LangSmith**.
+- A `theory_council` package.
+- A LangGraph pipeline with:
+  - `problem_framer`
+  - IM anchor agent
+  - Multiple theory agents (SCT, SDT, Wise, Reasoned Action, Environment & Implementation)
+  - Debate Moderator
+  - Theory Selector
+  - Integrator
+- A CLI that prints out problem framing, agent outputs, and a synthesis.
 
-The user will **not** be providing PDFs or an external knowledge base. You should rely on the OpenAI model’s internal knowledge and well-crafted prompts (persona cards) to shape each agent.
+Your job is to **refine and simplify** the system’s behavior and outputs to serve a very specific purpose:
+
+> **Help users develop relevant, theory-informed health promotion interventions for a problem**,  
+> using:
+> - a brief **AI framing** of the problem,
+> - a **debate** between theory agents,
+> - a concise **Intervention Mapping (IM) guide** based on prioritized theories, and
+> - **actual intervention recommendations** grounded in those IM steps.
+
+The multi-agent debate is there to deepen reasoning; the Intervention Mapping structure is there to make that depth **actionable**.
 
 ---
 
-## 0. Project structure
+## 0. Keep and reuse the existing project structure
 
-Create a minimal project with this structure:
+Assume the repo already looks like this:
 
 ```text
 theory-council/
   .gitignore
-  .env.example        # template; .env will be git-ignored
-  pyproject.toml      # or requirements.txt (see below)
+  .env.example
+  pyproject.toml OR requirements.txt
   README.md
 
   src/
     __init__.py
     theory_council/
       __init__.py
-      config.py       # env loading, LLM client constructors
-      personas.py     # persona definitions / prompts for each agent
-      graph.py        # LangGraph state + nodes + compiled app
-      cli.py          # command-line runner to interact with the graph
+      config.py
+      personas.py
+      graph.py
+      cli.py
+````
 
+**Do NOT** rebuild from scratch.
 
-If you prefer requirements.txt over pyproject.toml, that is acceptable. Do one dependency management approach, not both.
+* Keep `config.py` and `.env` handling as is.
+* Keep the overall graph architecture (problem_framer → IM anchor → theory agents → debate → theory selector → integrator).
+* You may refactor node functions and prompts to:
 
-1. Dependencies & environment
-1.1. Dependencies
+  * shorten outputs,
+  * enforce structure,
+  * and align with the new 4-section format.
 
-Use Python 3.11+ if available.
+---
 
-Install (via pyproject.toml or requirements.txt):
+## 1. Global design changes
 
-langgraph
+### 1.1. Final output: exactly four sections
 
-langchain
+The **Integrator** must now produce outputs in **four clear sections**, in this order:
 
-langchain-openai
+1. **Problem Framing**
 
-python-dotenv
+   * Show:
 
-(optional) typer or click for CLI ergonomics
-If adding a CLI lib feels heavy, a simple input()-based CLI is fine.
+     * the user’s **raw problem** description, and
+     * a concise AI-framed version of the problem that is passed to agents.
 
-Example requirements.txt (if using that):
+2. **Theory Council Debate**
 
-langgraph>=0.2.0
-langchain>=0.3.0
-langchain-openai>=0.3.0
-python-dotenv>=1.0.1
-typer>=0.12.0
+   * A **short debate summary** between theory agents:
 
-1.2. Environment variables
+     * what each lens contributes,
+     * where lenses disagree or have different emphases,
+     * 2–3 promising combinations.
 
-The project must support:
+3. **Intervention Mapping Guide (IM-Oriented)**
 
-OPENAI_API_KEY # required
+   * A concise, high-level IM guide to structure the intervention:
 
-LANGCHAIN_TRACING_V2 # optional (true/false)
+     * Logic model highlights (who, what behavior, which environment).
+     * Key outcomes and determinants to target.
+     * A minimal number of IM-style change objectives and methods (no exhaustive matrices).
 
-LANGCHAIN_API_KEY # optional for LangSmith
+4. **Recommended Intervention Concept(s)**
 
-LANGCHAIN_ENDPOINT # default: https://api.smith.langchain.com
+   * 1–3 concrete **intervention concepts** (brief proposals) grounded in:
 
-LANGCHAIN_PROJECT # e.g., "theory-council"
+     * the **prioritized theories** (from the Theory Selector),
+     * and the **IM guide** above.
 
-The user will manage these in a local .env file, and that file will be git-ignored. You should create a .env.example with placeholders; the user will copy it to .env and fill in real keys.
+Everything in the pipeline (IM anchor, theory agents, debate moderator, theory selector) exists to support these four sections.
 
-Use python-dotenv in config.py to load .env automatically.
+**IMPORTANT:** Outputs should be **concise**:
 
-2. config.py — environment + LLM clients
+* Aim for:
 
-Create src/theory_council/config.py with:
+  * Section 1: ~2 short paragraphs.
+  * Section 2: ~4–8 bullet points total.
+  * Section 3: ~3–6 bullet points plus ~1 short paragraph if needed.
+  * Section 4: 1–3 brief intervention concept descriptions (1 paragraph + 3–5 bullets each at most).
 
-A function to load environment variables (using dotenv.load_dotenv()).
+Avoid long essays and nested sub-sections.
 
-A function get_llm() returning a ChatOpenAI (or ChatOpenAI-compatible) instance with:
+### 1.2. Intervention Mapping: used but not over-elaborated
 
-default model: "gpt-4.1-mini" or "gpt-4o-mini" (or similar, but keep it as a constant).
+* Use **Intervention Mapping (IM)** as a backbone, but keep it light:
 
-sensible temperature (e.g., 0.3–0.5) because we want thoughtful, consistent output.
+  * Step 1: a short **logic model of the problem**.
+  * Step 2: a **small set** of priority behavioral & environmental outcomes and determinants.
+  * Step 3: a **small set** of methods & applications.
 
-Optionally a separate get_integration_llm() if you want a different temperature or model for the Integrator agent.
+No need to list full matrices or all steps 4–6. Only the amount that directly supports Section 3 and Section 4.
 
-Example behavior (pseudocode, not exact code):
+---
 
-from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI
-import os
+## 2. Personas: adjust for brevity and the 4-section goal
 
-load_dotenv()
+All personas live in `src/theory_council/personas.py`. Adjust existing constants and add new ones as needed.
 
-def get_llm(model: str = "gpt-4.1-mini", temperature: float = 0.3) -> ChatOpenAI:
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY not set")
-    return ChatOpenAI(model=model, temperature=temperature)
+### 2.1. IM Anchor persona — shorter, more focused
 
+Update the IM anchor’s system prompt so it produces a **compact** summary that the Integrator can later reuse in Section 3, and that theory agents can read.
 
-Make sure the module reads .env automatically when imported.
+**Key behaviors:**
 
-3. personas.py — theory-inspired persona cards
+* Given the framed problem, output:
 
-Create src/theory_council/personas.py.
+  * A **short logic model** (2–3 bullet clusters), not a full treatise.
+  * A **short list** of:
 
-Define three persona prompt strings (or small dataclasses) that encode how each agent should behave. These are inspired by the theorists, not impersonating them.
+    * 2–3 key behavioral outcomes.
+    * 2–3 environmental outcomes.
+    * 3–6 key determinants worth targeting.
+* Identify **what kind of help** the user seems to need (mostly Step 2–3, but do this in one short bullet list).
 
-Each persona should:
+Example (structure, not verbatim):
 
-State its theoretical lens.
+```python
+IM_ANCHOR_SYSTEM_PROMPT = """
+You are the Intervention Mapping (IM) Anchor Agent.
 
-List key constructs.
+Your output must be SHORT and STRUCTURED. Target ~300–400 words max.
 
-Explain how it reasons about behavior change.
+Given a structured description of a health promotion problem, you will:
 
-Give guidelines for intervention ideas (what to propose, what to avoid).
+1) Provide a compact LOGIC MODEL OF THE PROBLEM:
+   - 2–3 bullet points on:
+     • Priority population & setting
+     • Main health problem & behaviors
+     • Key environmental conditions and actors
 
-Explicitly avoid claiming to be the real person or to represent them.
+2) Suggest a small LOGIC MODEL OF CHANGE:
+   - 2–3 priority BEHAVIORAL outcomes
+   - 2–3 priority ENVIRONMENTAL outcomes
+   - 3–6 key DETERMINANTS (mix of individual + environment)
 
-Example: Social Cognitive Theory agent persona (as a Python string constant):
+3) Briefly say which IM steps are most relevant for the user’s query (1–2 bullets).
 
+Use simple bullet points. Avoid long paragraphs, tables, or exhaustive matrices.
+"""
+```
+
+### 2.2. Theory agents — emphasize brevity and IM linkage
+
+You already have persona prompts for:
+
+* SCT (Social Cognitive Theory).
+* SDT (Self-Determination Theory).
+* Wise/Belonging.
+* Reasoned Action / decision.
+* Environment & Implementation.
+
+Update each to:
+
+* Remind them:
+
+  * “Your answer should be concise (aim for ~300–400 words).”
+  * “Use bullet lists and short paragraphs.”
+* Instruct them to:
+
+  * Focus on **only a few determinants** (3–6).
+  * Propose **only a few methods and applications** that are most relevant.
+  * Explicitly mention how their suggestions fit into **Intervention Mapping** (e.g., as determinants, methods, or applications).
+* Avoid duplicating full IM structure; they should feed **ingredients** into the Integrator, not produce their own final IM sections.
+
+Example (SCT agent structure):
+
+```python
 SCT_AGENT_SYSTEM_PROMPT = """
-You are the Social Cognitive Theory Agent, inspired by the work of Albert Bandura.
-You are NOT Albert Bandura and you do not speak in the first person as him.
-You reason from social cognitive theory and the self-efficacy literature.
+You are the Social Cognitive Theory (SCT) Agent, inspired by Albert Bandura's work.
+You are NOT Albert Bandura and you do not speak as him.
+
+Your answer must be concise (~300–400 words), mostly bullets.
+
+You receive:
+- A structured problem description
+- An IM anchor summary (logic model and determinants)
 
 Your job:
-- Take a structured problem description about a behavior-change challenge.
-- Re-express it in social cognitive terms.
-- Identify key determinants and mechanisms: self-efficacy, observational learning, outcome expectancies, environmental facilitators/barriers, self-regulation, etc.
-- Propose 3–5 feasible intervention ideas that are explicitly grounded in these mechanisms.
-- For each idea, explain:
-  - which SCT constructs it targets,
-  - why it should work in this context,
-  - key risks or boundary conditions (e.g., risk of undermining agency or autonomy).
+1) Identify 3–6 key SCT determinants to prioritize (e.g., self-efficacy, outcome expectations, observational learning, self-regulation, environmental facilitators/barriers).
+2) For each determinant, propose 1–2 SCT-consistent CHANGE METHODS that fit IM Step 3 (e.g., modeling, guided practice, feedback).
+3) For each method, suggest 1 concrete PRACTICAL APPLICATION suited to the context (e.g., WhatsApp message sequence, group role-plays, brief scripts for nurses).
 
-Be concise but specific. Avoid generic advice. Do not invent empirical results; instead, speak at the level of theory-informed reasoning.
+Format:
+- Short bullets grouped by determinant.
+- A final 2–3 bullet “Notes” section on risks or boundary conditions.
+
+Do NOT produce full IM sections or long narratives; you are feeding ingredients to the Theory Council, not writing the final plan.
 """
+```
 
+Apply analogous changes to the SDT, Wise, RA, and Environment & Implementation agents.
 
-Similarly, define:
+### 2.3. Debate Moderator persona — keep as is but limit length
 
-SDT_AGENT_SYSTEM_PROMPT (Self-Determination Theory — autonomy, competence, relatedness).
+The Debate Moderator already summarizes complementarities and tensions. Now:
 
-WISE_AGENT_SYSTEM_PROMPT (Wise interventions / belonging — attributions, meaning-making, social norms, subtle reframing).
+* Enforce that it must be short (~300–400 words).
+* Ask it to produce mainly **bullets**, with a maximum of:
 
-Also define a system prompt for an Integrator agent, e.g.:
+  * 6–10 bullets total.
+  * It should clearly highlight:
 
+    * What each lens adds.
+    * Any noteworthy tensions.
+    * 2–3 promising combinations for this problem.
+
+Example addition to its system prompt:
+
+```python
+DEBATE_MODERATOR_SYSTEM_PROMPT = """
+You are the Debate Moderator for the Theory Council.
+
+Your job is to produce a SHORT summary (~300–400 words) in bullet form.
+
+...
+Limit yourself to:
+- At most 2 bullets per theory on what it contributes.
+- 2–3 bullets on main tensions.
+- 2–3 bullets on promising theory combinations.
+
+Avoid long paragraphs. Your output will be shown directly to the user as the 'Theory Council Debate' section.
+"""
+```
+
+### 2.4. Theory Selector persona — more concise decision note
+
+The Theory Selector’s job stays the same conceptually, but:
+
+* Its ranking and rationale will mostly inform the Integrator.
+* Its output should be short enough that if printed, it doesn’t take more than ~300–400 words.
+* Ask it for a **ranked list + 1 short “decision note” paragraph**.
+
+Example modification:
+
+```python
+THEORY_SELECTOR_SYSTEM_PROMPT = """
+You are the Theory Selector (Decision Agent) for the Theory Council.
+
+Your output must be concise (~300–400 words).
+
+Tasks:
+1) Rank the theories for THIS problem (SCT, SDT, Wise, Reasoned Action, Environment & Implementation):
+   - Use a numbered list with a short (1–2 sentence) rationale for each.
+
+2) Recommend the TOP 1–3 lenses (or combinations) for designing the intervention.
+
+3) Provide a short 'Decision Note' paragraph explaining:
+   - Why these lenses are best suited,
+   - How they align with the IM anchor’s determinants and context.
+
+Keep everything brief. Avoid repeating full details from the theory outputs.
+"""
+```
+
+### 2.5. Integrator persona — enforce the four sections
+
+The Integrator is the key piece to change.
+
+Update `INTEGRATOR_SYSTEM_PROMPT` so that it:
+
+* Always produces **four sections**, numbered and titled as:
+
+  1. **Problem Framing**
+  2. **Theory Council Debate**
+  3. **Intervention Mapping Guide**
+  4. **Recommended Intervention Concept(s)**
+
+* Uses:
+
+  * `raw_problem`
+  * `framed_problem`
+  * `im_summary`
+  * `theory_outputs`
+  * `debate_summary`
+  * `theory_ranking` (decision note)
+
+* Stays within ~800–1200 words total (as a soft guideline).
+
+Example:
+
+```python
 INTEGRATOR_SYSTEM_PROMPT = """
 You are the Integrator Agent for a 'Theory Council' of psychological intervention designers.
-You have received proposals from several theory-inspired agents (e.g., SCT, SDT, Wise Intervention).
 
-Your job:
-- Read and compare their proposals.
-- Identify overlapping ideas and complementary strengths.
-- Synthesize 2–3 concrete intervention packages that:
-  - are clearly described (who, what, when, how),
-  - explicitly map to underlying mechanisms from multiple theories,
-  - highlight how they might promote human agency rather than undermine it.
-- For each package, provide:
-  - a short title,
-  - a description,
-  - mechanisms and theoretical justification,
-  - key risks or open questions for human researchers to examine.
+You receive:
+- The user's RAW PROBLEM description.
+- A FRAMED PROBLEM description.
+- An IM anchor summary (logic model and determinants).
+- Outputs from multiple theory agents (SCT, SDT, Wise, Reasoned Action, Environment & Implementation).
+- A Debate Moderator summary.
+- A Theory Selector ranking and decision note.
 
-Write in a clear, structured format that a researcher or practitioner could use as a starting point.
+Your job is to produce a SINGLE, CONCISE output organized into EXACTLY FOUR SECTIONS:
+
+1. Problem Framing
+   - Show the raw problem text (quoted or paraphrased once).
+   - Provide a short, clear AI framing in your own words (2–4 sentences).
+   - This framing should be similar to what was given to the agents.
+
+2. Theory Council Debate
+   - Summarize the main points from the debate moderator and the theory selector:
+     • What each key theory lens brings.
+     • Main tensions or trade-offs.
+     • 2–3 promising combinations.
+   - Use bullets. Keep this brief (~6–10 bullets total).
+
+3. Intervention Mapping Guide
+   - Provide a compact IM-oriented guide, based on the prioritized theories:
+     • 2–3 priority BEHAVIORAL outcomes.
+     • 2–3 priority ENVIRONMENTAL outcomes.
+     • 3–6 key DETERMINANTS to target, labeled with which theories support them.
+     • 3–6 IM-style CHANGE METHODS (at a high level) that follow from those determinants.
+   - Use bullets and short phrases. This is a guide, not a full IM workbook.
+
+4. Recommended Intervention Concept(s)
+   - Propose 1–3 concrete intervention concepts (e.g., "WhatsApp KMC coaching with norms & self-efficacy support", "Nurse-led group debrief with autonomy-supportive scripts").
+   - For EACH concept, provide:
+     • A 2–4 sentence description (who, what, where, via which channel).
+     • 3–5 bullets linking it back to:
+         – the prioritized theories,
+         – the determinants and methods from Section 3.
+   - These concepts should be realistic starting points for a health promotion team using Intervention Mapping.
+
+GENERAL RULES:
+- Be concise. Avoid repeating long passages from earlier agents.
+- Use clear headings "1. Problem Framing", "2. Theory Council Debate", etc.
+- Do NOT introduce new theories. Only build from the existing theory-agent outputs and IM anchor.
 """
+```
 
-4. graph.py — LangGraph state + nodes
+---
 
-Create src/theory_council/graph.py with:
+## 3. graph.py — state and flow remain similar, but Integrator uses new structure
 
-A state definition using TypedDict or pydantic for clarity. Example:
+In `src/theory_council/graph.py`:
 
-from typing import TypedDict, List, Optional
+* You likely already have a `CouncilState` similar to:
 
-class CouncilState(TypedDict):
-    raw_problem: str
-    framed_problem: str
-    sct_output: Optional[str]
-    sdt_output: Optional[str]
-    wise_output: Optional[str]
-    final_synthesis: Optional[str]
+  ```python
+  class CouncilState(TypedDict):
+      raw_problem: str
+      framed_problem: str
+      im_summary: Optional[str]
+      theory_outputs: Dict[str, str]
+      debate_summary: Optional[str]
+      theory_ranking: Optional[str]
+      final_synthesis: Optional[str]
+  ```
 
+* Keep this structure.
 
-Node functions for:
+* Ensure the Integrator node has access to the **raw problem** as well as `framed_problem` and other fields.
 
-problem_framer
+  * If the Integrator node doesn’t have the raw problem yet, adjust the node to take it from `state["raw_problem"]` and include it in the user message.
 
-sct_agent
+Example Integrator node skeleton (logic only):
 
-sdt_agent
-
-wise_agent
-
-integrator
-
-Each node function:
-
-Accepts a CouncilState.
-
-Uses get_llm() from config.py.
-
-Sends a structured prompt: system prompt (from personas.py) + user content containing the relevant part of the state.
-
-Returns an updated state (copy of previous dict + new fields).
-
-Example pattern (not exact code, but shape):
-
-from langgraph.graph import StateGraph, END
-from .config import get_llm
-from .personas import (
-    SCT_AGENT_SYSTEM_PROMPT,
-    SDT_AGENT_SYSTEM_PROMPT,
-    WISE_AGENT_SYSTEM_PROMPT,
-    INTEGRATOR_SYSTEM_PROMPT,
-)
-
-def problem_framer(state: CouncilState) -> CouncilState:
-    llm = get_llm()
-    prompt = (
-        "You are a problem-framing assistant for psychological interventions.\n"
-        "Take the raw description below and convert it into a structured summary with:\n"
-        "- Population and setting\n"
-        "- Target behavior(s)\n"
-        "- Barriers and assets\n"
-        "- Delivery channel (if known)\n"
-        "- Constraints and goals\n\n"
-        f"Raw description:\n{state['raw_problem']}\n"
-    )
-    resp = llm.invoke(prompt)
-    new_state = dict(state)
-    new_state["framed_problem"] = resp.content
-    return new_state
-
-
-For an agent node, you must use the system prompt + the framed problem:
-
-def sct_agent(state: CouncilState) -> CouncilState:
-    llm = get_llm()
-    messages = [
-        {"role": "system", "content": SCT_AGENT_SYSTEM_PROMPT},
-        {
-            "role": "user",
-            "content": f"Here is the structured problem description:\n\n{state['framed_problem']}",
-        },
-    ]
-    resp = llm.invoke(messages)
-    new_state = dict(state)
-    new_state["sct_output"] = resp.content
-    return new_state
-
-
-Graph wiring:
-
-Use StateGraph from langgraph.graph. The flow should be:
-
-Entry: problem_framer
-
-Then: sct_agent, sdt_agent, wise_agent — you can chain them sequentially for simplicity, or run them in parallel if you want.
-
-Finally: integrator creates final_synthesis and returns.
-
-Simple sequential wiring:
-
-from langgraph.graph import StateGraph, END
-
-def build_graph():
-    graph = StateGraph(CouncilState)
-
-    graph.add_node("problem_framer", problem_framer)
-    graph.add_node("sct_agent", sct_agent)
-    graph.add_node("sdt_agent", sdt_agent)
-    graph.add_node("wise_agent", wise_agent)
-    graph.add_node("integrator", integrator)
-
-    graph.set_entry_point("problem_framer")
-    graph.add_edge("problem_framer", "sct_agent")
-    graph.add_edge("sct_agent", "sdt_agent")
-    graph.add_edge("sdt_agent", "wise_agent")
-    graph.add_edge("wise_agent", "integrator")
-    graph.add_edge("integrator", END)
-
-    return graph.compile()
-
-
-The integrator node should read sct_output, sdt_output, and wise_output, then use the INTEGRATOR_SYSTEM_PROMPT to synthesize a final_synthesis string.
-
-Example shape:
-
+```python
 def integrator(state: CouncilState) -> CouncilState:
     llm = get_llm(temperature=0.4)
-    combined = (
-        "=== SCT Agent Output ===\n" + (state.get("sct_output") or "") + "\n\n"
-        "=== SDT Agent Output ===\n" + (state.get("sdt_output") or "") + "\n\n"
-        "=== Wise Agent Output ===\n" + (state.get("wise_output") or "") + "\n"
+    theory_outputs = state.get("theory_outputs") or {}
+    # Serialize theory outputs if needed (shortened)
+    combined_theories = []
+    for key, label in [
+        ("sct", "SCT (Social Cognitive Theory)"),
+        ("sdt", "SDT (Self-Determination Theory)"),
+        ("wise", "Wise / Belonging"),
+        ("ra", "Reasoned Action / Decision"),
+        ("env_impl", "Environment & Implementation"),
+    ]:
+        if key in theory_outputs:
+            combined_theories.append(f"=== {label} ({key}) ===\n{theory_outputs[key]}")
+    theories_text = "\n\n".join(combined_theories)
+
+    user_content = (
+        "RAW PROBLEM:\n"
+        + state["raw_problem"]
+        + "\n\nFRAMED PROBLEM:\n"
+        + state["framed_problem"]
+        + "\n\nIM ANCHOR SUMMARY:\n"
+        + (state.get("im_summary") or "")
+        + "\n\nTHEORY AGENT OUTPUTS:\n"
+        + theories_text
+        + "\n\nDEBATE SUMMARY:\n"
+        + (state.get("debate_summary") or "")
+        + "\n\nTHEORY RANKING AND DECISION NOTE:\n"
+        + (state.get("theory_ranking") or "")
     )
+
     messages = [
         {"role": "system", "content": INTEGRATOR_SYSTEM_PROMPT},
-        {"role": "user", "content": combined},
+        {"role": "user", "content": user_content},
     ]
     resp = llm.invoke(messages)
     new_state = dict(state)
     new_state["final_synthesis"] = resp.content
     return new_state
+```
 
+The wiring of the graph (nodes and edges) can remain as in the previous version:
 
-Export a get_app() or similar function that returns the compiled graph:
+* `problem_framer` → `im_anchor` → theory agents → `debate_moderator` → `theory_selector` → `integrator`.
 
-def get_app():
-    return build_graph()
+---
 
-5. cli.py — simple command-line interface
+## 4. cli.py — print the four sections clearly
 
-Create src/theory_council/cli.py that:
+In `src/theory_council/cli.py`:
 
-Imports get_app() from graph.py.
+* The Integrator now returns a single `final_synthesis` already structured into the four sections.
+* Simplify the CLI output to:
 
-Prompts the user (via input() or Typer) for a free-text problem description.
+  * Option A: print only `final_synthesis` (since it includes all four sections).
+  * Option B: optionally print some intermediate state (e.g., IM anchor summary) for debugging, but it’s not required.
 
-Creates an initial CouncilState:
+Recommended simple behavior:
 
-initial_state = {
-    "raw_problem": user_input,
-    "framed_problem": "",
-    "sct_output": None,
-    "sdt_output": None,
-    "wise_output": None,
-    "final_synthesis": None,
-}
+```python
+print("=== Theory Council Output ===")
+print(result.get("final_synthesis") or "")
+```
 
+If you want, you can still print `framed_problem` and `im_summary` separately for debugging, but the user-facing structure should now be in the four sections.
 
-Runs the graph:
+---
 
-app = get_app()
-result = app.invoke(initial_state)
+## 5. Style & quality guidelines
 
+* **Brevity is now a core feature.**
 
-Prints out:
+  * Enforce word/section limits in personas and system prompts.
+* Keep code clean and modular:
 
-The framed problem.
+  * Prompts live in `personas.py`.
+  * Graph wiring and state in `graph.py`.
+  * Environment and model setup in `config.py`.
+* Assume the user will later:
 
-Each theory agent’s output.
+  * Add a UI around this.
+  * Possibly plug in RAG or curated theory notes.
+* Make sure any changes preserve the ability to log to LangSmith if env vars are set.
 
-The final synthesis.
+The priority is to:
 
-Format nicely:
-
-print("=== Structured Problem ===")
-print(result["framed_problem"])
-print("\n=== SCT Agent ===")
-print(result["sct_output"])
-print("\n=== SDT Agent ===")
-print(result["sdt_output"])
-print("\n=== Wise Intervention Agent ===")
-print(result["wise_output"])
-print("\n=== Final Synthesized Intervention Packages ===")
-print(result["final_synthesis"])
-
-
-Optionally expose an entry point in if __name__ == "__main__": so the user can run:
-
-python -m theory_council.cli
-
-6. README.md
-
-Generate a simple README.md that explains:
-
-What the project does (Theory Council multi-agent demo).
-
-How to set up:
-
-python -m venv .venv
-source .venv/bin/activate  # or .venv\Scripts\activate on Windows
-pip install -r requirements.txt
-cp .env.example .env
-# edit .env to add API keys
-python -m theory_council.cli
-
-
-How to enable LangSmith tracing by setting LANGCHAIN_TRACING_V2=true and filling LANGCHAIN_API_KEY, LANGCHAIN_PROJECT.
-
-7. Style & quality guidelines
-
-When writing code:
-
-Use clear function names and docstrings.
-
-Keep prompts in one place (personas.py) so they are easy to iterate on.
-
-Handle missing environment variables gracefully (raise clear errors).
-
-Prefer type hints (e.g., -> CouncilState) where practical.
-
-Assume the user may later extend the system with more theory agents or a debate loop, so keep the graph wiring readable.
-
-Do NOT:
-
-Attempt to scrape PDFs or external data.
-
-Hard-code any real API keys.
-
-Commit .env file; only .env.example should be tracked.
-
-Focus on making the project runnable end-to-end and easy for the user to modify prompts and add new theory agents later.
+* Deliver **high-quality, theory-informed intervention suggestions**,
+* Organized in the four sections the user requested,
+* In a format that is easy for a health promotion / IM practitioner to read and use.

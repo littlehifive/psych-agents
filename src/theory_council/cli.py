@@ -20,25 +20,16 @@ def _prompt_for_problem() -> str:
     return typer.prompt("Problem description")
 
 
-def _format_section(title: str, body: Optional[str]) -> str:
-    """
-    Produce a simple textual section for CLI output.
-    """
-    divider = "=" * len(title)
-    content = body or "(no output)"
-    return f"{divider}\n{title}\n{divider}\n{content.strip()}\n"
-
-
 def _run_council(problem: str) -> CouncilState:
     """
     Execute the Theory Council graph for the provided problem statement.
     """
     initial_state: CouncilState = {
         "raw_problem": problem,
-        "framed_problem": "",
-        "sct_output": None,
-        "sdt_output": None,
-        "wise_output": None,
+        "im_summary": None,
+        "theory_outputs": {},
+        "debate_summary": None,
+        "theory_ranking": None,
         "final_synthesis": None,
     }
     app = get_app()
@@ -52,17 +43,9 @@ def run(problem: Optional[str] = typer.Option(None, "--problem", "-p", help="Pro
     """
     text = problem or _prompt_for_problem()
     result = _run_council(text)
-
-    sections = [
-        _format_section("Structured Problem", result.get("framed_problem")),
-        _format_section("SCT Agent", result.get("sct_output")),
-        _format_section("SDT Agent", result.get("sdt_output")),
-        _format_section("Wise Intervention Agent", result.get("wise_output")),
-        _format_section("Final Synthesized Intervention Packages", result.get("final_synthesis")),
-    ]
-
-    for section in sections:
-        typer.echo(section)
+    final_text = (result.get("final_synthesis") or "").strip() or "(no output produced)"
+    typer.echo("=== Theory Council Output ===")
+    typer.echo(final_text)
 
 
 def main() -> None:

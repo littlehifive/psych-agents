@@ -1,11 +1,13 @@
 # Theory Council (LangGraph Demo)
 
-Local Python demo of a "Theory Council" that routes a behavior-change problem description through several theory-inspired agents (Social Cognitive Theory, Self-Determination Theory, Wise Intervention) and then synthesizes the outputs via an Integrator agent. Everything runs in the terminal using LangGraph, LangChain, and OpenAI models.
+Local Python demo of a "Theory Council" that routes a behavior-change or health promotion problem description through multiple theory-inspired agents and synthesizes the results with Intervention Mapping (IM) structure. Everything runs in the terminal using LangGraph, LangChain, and OpenAI models.
 
 ## Features
-- Problem-framing helper that turns raw text into a structured brief.
-- Three persona-driven agents grounded in major behavior-change theories.
-- Integrator agent that weaves agent proposals into 2–3 intervention packages.
+- Problem-framing helper that converts raw text into an IM-friendly brief.
+- IM Anchor agent that drafts a logic model of the problem & change (Steps 1-2).
+- Five theory agents (SCT, SDT, Wise/Belonging, Reasoned Action, Environment & Implementation) that map determinants, methods, and applications into IM Step 2-3 language.
+- Debate Moderator plus Theory Selector that critique, rank, and prioritize the most relevant theory lenses.
+- Integrator agent that produces a final Intervention Mapping-ready synthesis (Steps 1-3 with implementation notes).
 - Simple Typer-based CLI (`python -m theory_council.cli`).
 - Optional LangSmith/LangChain tracing hooks.
 
@@ -47,12 +49,11 @@ python -m theory_council.cli
 python -m theory_council.cli --problem "Students feel disconnected from first-year STEM courses..."
 ```
 
-The CLI prints:
-1. Structured problem brief
-2. SCT agent proposals
-3. SDT agent proposals
-4. Wise intervention proposals
-5. Final synthesized intervention packages
+The CLI now guides users through four concise sections:
+1. Raw problem text plus the AI framing sent to agents.
+2. Debate highlights (including Theory Selector rationale).
+3. Intervention Mapping guidance grounded in prioritized theories.
+4. Recommended intervention concept(s) derived from the IM blueprint.
 
 ## LangSmith / LangChain Tracing
 - Set `LANGCHAIN_TRACING_V2=true` in `.env`.
@@ -65,6 +66,6 @@ The CLI prints:
 
 ## Requirements
 - Python 3.11+
-- OpenAI API access for GPT-4.1-mini (changeable in `config.py`).
+- OpenAI API access for GPT-4o-mini (agents) and GPT-4.1 (integrator by default).
 
 This demo is intended for local experimentation—feel free to adapt prompts, nodes, or orchestration logic for your own psychological intervention explorations.
