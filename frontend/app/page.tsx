@@ -30,10 +30,108 @@ export default function ConversationPage() {
   );
 
   const handleSend = async (content: string) => {
-    const pendingMessages = [...messages, { role: "user", content }];
+    // 1. Optimistic update
+    const pendingMessages: ChatMessage[] = [...messages, { role: "user" as const, content }];
     setMessages(pendingMessages);
     setIsSending(true);
     setError(null);
+
+    // If agent is enabled, use the streaming endpoint directly so we see progress
+    if (agentEnabled) {
+      try {
+        const response = await fetch(`${process.env.NEXT_PUBLIC_COUNCIL_API || "http://localhost:8000"}/council/run/stream`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            problem: content,
+            session_id: sessionId,
+            metadata: {
+              // Ensure manual disable flag is preserved if needed, though this is a direct run.
+              // We'll mimic the conversation endpoint's auto-disable logic manually.
+            }
+          }),
+        });
+
+        if (!response.ok) throw new Error("Stream failed");
+
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error("No reader");
+
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        // Reset agent result for new run
+        setAgentResult({
+          raw_problem: content,
+          theory_outputs: {},
+          sections: {},
+          agent_traces: []
+        } as any);
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          const lines = buffer.split("\n\n");
+          buffer = lines.pop() || ""; // Keep incomplete chunk
+
+          for (const line of lines) {
+            if (line.startsWith("event: trace")) {
+              const dataLine = line.split("\n").find(l => l.startsWith("data: "));
+              if (dataLine) {
+                const data = JSON.parse(dataLine.slice(6));
+                // Append trace
+                setAgentResult(prev => {
+                  const existing = prev?.agent_traces || [];
+                  // Avoid dupes if needed, or just append
+                  return {
+                    ...prev!,
+                    agent_traces: [...existing, data.trace]
+                  };
+                });
+                if (data.run_id) setRunId(data.run_id);
+              }
+            } else if (line.startsWith("event: complete")) {
+              const dataLine = line.split("\n").find(l => l.startsWith("data: "));
+              if (dataLine) {
+                const data = JSON.parse(dataLine.slice(6));
+                // Final result
+                const runResponse = data.run;
+                setAgentResult(runResponse.result);
+                setRunId(runResponse.run_id);
+                setSessionId(runResponse.session_id);
+
+                // Add assistant message
+                setMessages(prev => [
+                  ...prev,
+                  { role: "assistant", content: runResponse.result.final_synthesis }
+                ]);
+
+                // Auto disable agent
+                setAgentEnabled(false);
+              }
+            } else if (line.startsWith("event: started")) {
+              const dataLine = line.split("\n").find(l => l.startsWith("data: "));
+              if (dataLine) {
+                const data = JSON.parse(dataLine.slice(6));
+                setSessionId(data.session_id);
+              }
+            }
+          }
+        }
+
+      } catch (err) {
+        console.error(err);
+        setError("Streaming failed. Please check the backend.");
+        // Fallback to removing the user message? Or just showing error.
+      } finally {
+        setIsSending(false);
+      }
+      return;
+    }
+
+    // Standard chat flow (non-streaming or legacy)
     try {
       const response = await sendConversation({
         messages: pendingMessages,
@@ -87,11 +185,10 @@ export default function ConversationPage() {
                 return (
                   <div
                     key={`${message.role}-${index}-${message.content.slice(0, 12)}`}
-                    className={`max-w-3xl rounded-2xl px-4 py-3 text-sm leading-relaxed shadow ${
-                      isUser
-                        ? "self-end bg-brand-600 text-white shadow-brand-500/40"
-                        : "self-start bg-slate-50 text-slate-800"
-                    }`}
+                    className={`max-w-3xl rounded-2xl px-4 py-3 text-sm leading-relaxed shadow ${isUser
+                      ? "self-end bg-brand-600 text-white shadow-brand-500/40"
+                      : "self-start bg-slate-50 text-slate-800"
+                      }`}
                   >
                     <p className="whitespace-pre-wrap">{message.content}</p>
                   </div>
@@ -109,7 +206,7 @@ export default function ConversationPage() {
             Mode: {agentEnabled ? "Agent workflow" : "ChatGPT-style conversation"}
           </p>
         </div>
-        <AgentFlowVisualizer result={agentResult} runId={runId} />
+        <AgentFlowVisualizer result={agentResult} runId={runId} isLoading={isSending} />
       </section>
     </main>
   );

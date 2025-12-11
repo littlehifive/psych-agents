@@ -36,8 +36,17 @@ export function ChatComposer({ onSend, disabled, placeholder }: Props) {
         value={message}
         disabled={disabled || isSending}
         onChange={(event) => setMessage(event.target.value)}
+        onKeyDown={(e) => {
+          if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+            e.preventDefault();
+            handleSend();
+          }
+        }}
       />
-      <div className="mt-3 flex items-center justify-end text-sm text-slate-600">
+      <div className="mt-3 flex items-center justify-between text-sm text-slate-600">
+        <span className="text-xs text-slate-400 hidden lg:inline-block">
+          Press <kbd className="font-sans">Cmd+Enter</kbd> to send
+        </span>
         <button
           type="button"
           onClick={handleSend}

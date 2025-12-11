@@ -4,7 +4,7 @@ LangGraph state and node definitions for the Theory Council workflow.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, Dict, List, Optional, TypedDict, Iterator
 
 from langgraph.graph import END, StateGraph
 
@@ -533,6 +533,37 @@ def run_council_pipeline(
     }
 
 
+def stream_council_pipeline(
+    problem: str,
+    *,
+    metadata: Optional[Dict[str, Any]] = None,
+    app: Optional[Any] = None,
+) -> Iterator[CouncilState]:
+    """
+    Generator that yields updates from the Council pipeline as agents complete.
+    """
+    initial_state: CouncilState = {
+        "raw_problem": problem,
+        "framed_problem": None,
+        "im_summary": None,
+        "theory_outputs": {},
+        "debate_summary": None,
+        "theory_ranking": None,
+        "final_synthesis": None,
+        "agent_traces": [],
+    }
+
+    compiled = app or get_app()
+    invoke_kwargs: Dict[str, Any] = {}
+    if metadata:
+        invoke_kwargs["config"] = {"metadata": metadata}
+
+    for step_output in compiled.stream(initial_state, **invoke_kwargs):
+        # step_output is like {"node_name": updated_state}
+        for _, state in step_output.items():
+            yield state
+
+
 __all__ = [
     "AgentTrace",
     "CouncilState",
@@ -550,6 +581,7 @@ __all__ = [
     "build_graph",
     "get_app",
     "run_council_pipeline",
+    "stream_council_pipeline",
 ]
 
 

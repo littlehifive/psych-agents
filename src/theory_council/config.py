@@ -12,7 +12,7 @@ from langchain_openai import ChatOpenAI
 # Allow project-local .env values to override inherited environment entries
 load_dotenv(override=True)
 
-DEFAULT_MODEL = "gpt-4o-mini"
+DEFAULT_MODEL = "gpt-4o"
 DEFAULT_TEMPERATURE = 0.35
 INTEGRATOR_MODEL = os.environ.get("INTEGRATOR_MODEL", "gpt-4.1")
 INTEGRATOR_TEMPERATURE = 0.4
