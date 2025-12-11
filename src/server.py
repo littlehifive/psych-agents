@@ -101,6 +101,10 @@ class CouncilRunRequest(BaseModel):
         default=None,
         description="Optional session to associate this run with.",
     )
+    chat_history: Optional[List[ChatMessageModel]] = Field(
+        default=None,
+        description="Optional conversation history to provide context for the agent.",
+    )
 
 
 class CouncilRunResponse(BaseModel):
@@ -197,7 +201,12 @@ async def stream_council_run(payload: CouncilRunRequest) -> StreamingResponse:
         # Note: In production with many users, we'd want to offload this to a task queue
         # or use run_in_executor to avoid blocking the thread if not using async graph.
         # Here we rely on FastAPI threading the sync generator response.
-        for state in stream_council_pipeline(payload.problem, metadata=payload.metadata):
+        history_dicts = [m.to_dict() for m in (payload.chat_history or [])]
+        for state in stream_council_pipeline(
+            payload.problem,
+            metadata=payload.metadata,
+            chat_history=history_dicts,
+        ):
             final_state = state
             # Emit the NEWEST trace if present
             traces = state.get("agent_traces") or []

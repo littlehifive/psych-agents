@@ -11,8 +11,6 @@ import {
   Scale
 } from "lucide-react";
 import type { CouncilResult } from "@/lib/types";
-import AgentTimeline from "./agent-timeline";
-import FourSectionReport from "./four-section-report";
 
 interface Props {
   result: CouncilResult | null;
@@ -128,7 +126,7 @@ export function AgentFlowVisualizer({ result, runId, isLoading }: Props) {
                   >
                     <div className="flex items-center justify-between">
                       <span className="font-semibold text-slate-800">{trace.agent_label}</span>
-                      <span className="text-[10px] uppercase text-slate-400">{trace.metadata?.category}</span>
+                      <span className="text-[10px] uppercase text-slate-400">{String(trace.metadata?.category || "")}</span>
                     </div>
                     <p className="mt-1 line-clamp-2 text-xs text-slate-600">
                       {trace.output}
@@ -141,15 +139,7 @@ export function AgentFlowVisualizer({ result, runId, isLoading }: Props) {
         </div>
       </div>
 
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: !isLoading && result.final_synthesis ? 1 : 0 }}
-        transition={{ delay: 0.5 }}
-      >
-        <FourSectionReport result={result} />
-      </motion.div>
 
-      <AgentTimeline traces={traces} title="Execution Timestamps" />
 
       {/* Detail Modal */}
       <AnimatePresence>

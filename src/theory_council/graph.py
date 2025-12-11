@@ -58,6 +58,7 @@ class CouncilState(TypedDict):
     theory_ranking: Optional[str]
     final_synthesis: Optional[str]
     agent_traces: List[AgentTrace]
+    chat_history: List[Dict[str, str]]
 
 
 class CouncilPipelineResult(TypedDict):
@@ -156,9 +157,22 @@ def _combined_theory_outputs(state: CouncilState) -> str:
 def problem_framer(state: CouncilState) -> CouncilState:
     llm = get_llm()
     started = _now()
+    
+    # Format chat history if present
+    history_text = ""
+    history = state.get("chat_history") or []
+    if history:
+        # Take last 10 messages to avoid overflowing context too much, skipping system prompts
+        relevant = [m for m in history if m.get("role") != "system"][-10:]
+        formatted = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in relevant])
+        history_text = f"\n\nCONVERSATION HISTORY:\n{formatted}"
+
     messages = [
         {"role": "system", "content": PROBLEM_FRAMER_SYSTEM_PROMPT},
-        {"role": "user", "content": state["raw_problem"]},
+        {
+            "role": "user", 
+            "content": f"USER REQUEST:\n{state['raw_problem']}{history_text}\n\nTask: Frame this problem for intervention mapping."
+        },
     ]
     response = llm.invoke(messages)
     completed = _now()
@@ -537,6 +551,7 @@ def stream_council_pipeline(
     problem: str,
     *,
     metadata: Optional[Dict[str, Any]] = None,
+    chat_history: Optional[List[Dict[str, str]]] = None,
     app: Optional[Any] = None,
 ) -> Iterator[CouncilState]:
     """
@@ -551,6 +566,7 @@ def stream_council_pipeline(
         "theory_ranking": None,
         "final_synthesis": None,
         "agent_traces": [],
+        "chat_history": chat_history or [],
     }
 
     compiled = app or get_app()

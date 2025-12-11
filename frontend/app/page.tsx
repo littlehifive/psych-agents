@@ -24,10 +24,22 @@ export default function ConversationPage() {
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Keep track of the abort controller for the active request
+  const [abortController, setAbortController] = useState<AbortController | null>(null);
+
   const visibleMessages = useMemo(
     () => messages.filter((message) => message.role !== "system"),
     [messages],
   );
+
+  const handleStop = () => {
+    if (abortController) {
+      abortController.abort();
+      setAbortController(null);
+      setIsSending(false);
+      // Optional: Add a system message saying "Stopped by user"?
+    }
+  };
 
   const handleSend = async (content: string) => {
     // 1. Optimistic update
@@ -36,19 +48,22 @@ export default function ConversationPage() {
     setIsSending(true);
     setError(null);
 
+    // Create new abort controller
+    const controller = new AbortController();
+    setAbortController(controller);
+
     // If agent is enabled, use the streaming endpoint directly so we see progress
     if (agentEnabled) {
       try {
         const response = await fetch(`${process.env.NEXT_PUBLIC_COUNCIL_API || "http://localhost:8000"}/council/run/stream`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
           body: JSON.stringify({
             problem: content,
             session_id: sessionId,
-            metadata: {
-              // Ensure manual disable flag is preserved if needed, though this is a direct run.
-              // We'll mimic the conversation endpoint's auto-disable logic manually.
-            }
+            chat_history: messages, // Pass ALL previous messages as history
+            metadata: {},
           }),
         });
 
@@ -81,14 +96,9 @@ export default function ConversationPage() {
               const dataLine = line.split("\n").find(l => l.startsWith("data: "));
               if (dataLine) {
                 const data = JSON.parse(dataLine.slice(6));
-                // Append trace
                 setAgentResult(prev => {
                   const existing = prev?.agent_traces || [];
-                  // Avoid dupes if needed, or just append
-                  return {
-                    ...prev!,
-                    agent_traces: [...existing, data.trace]
-                  };
+                  return { ...prev!, agent_traces: [...existing, data.trace] };
                 });
                 if (data.run_id) setRunId(data.run_id);
               }
@@ -96,19 +106,10 @@ export default function ConversationPage() {
               const dataLine = line.split("\n").find(l => l.startsWith("data: "));
               if (dataLine) {
                 const data = JSON.parse(dataLine.slice(6));
-                // Final result
-                const runResponse = data.run;
-                setAgentResult(runResponse.result);
-                setRunId(runResponse.run_id);
-                setSessionId(runResponse.session_id);
-
-                // Add assistant message
-                setMessages(prev => [
-                  ...prev,
-                  { role: "assistant", content: runResponse.result.final_synthesis }
-                ]);
-
-                // Auto disable agent
+                setAgentResult(data.run.result);
+                setRunId(data.run.run_id);
+                setSessionId(data.run.session_id);
+                setMessages(prev => [...prev, { role: "assistant", content: data.run.result.final_synthesis }]);
                 setAgentEnabled(false);
               }
             } else if (line.startsWith("event: started")) {
@@ -121,12 +122,16 @@ export default function ConversationPage() {
           }
         }
 
-      } catch (err) {
+      } catch (err: any) {
+        if (err.name === 'AbortError') {
+          console.log("Stream aborted by user");
+          return; // Clean exit
+        }
         console.error(err);
         setError("Streaming failed. Please check the backend.");
-        // Fallback to removing the user message? Or just showing error.
       } finally {
         setIsSending(false);
+        setAbortController(null);
       }
       return;
     }
@@ -140,6 +145,10 @@ export default function ConversationPage() {
       });
       setSessionId(response.session_id);
       setMessages(response.messages);
+
+      // Basic chat doesn't support aborting via API client wrapper easily unless we refactor api.ts
+      // But user specifically asked for stopping the *agentic process*.
+
       if (response.agent_result) {
         setAgentResult(response.agent_result);
         setRunId(response.run_id ?? null);
@@ -154,6 +163,7 @@ export default function ConversationPage() {
       setError(err instanceof Error ? err.message : "Unable to send message.");
     } finally {
       setIsSending(false);
+      setAbortController(null);
     }
   };
 
@@ -173,7 +183,6 @@ export default function ConversationPage() {
             we’ll show you every step, then return to natural chat automatically.
           </p>
         </div>
-        <AgentToggle enabled={agentEnabled} onChange={setAgentEnabled} />
       </header>
 
       <section className="grid gap-6 lg:grid-cols-3">
@@ -201,7 +210,9 @@ export default function ConversationPage() {
               {error} Please try again or reload the page.
             </p>
           )}
-          <ChatComposer onSend={handleSend} disabled={isSending} />
+          <ChatComposer onSend={handleSend} onStop={handleStop} disabled={isSending}>
+            <AgentToggle enabled={agentEnabled} onChange={setAgentEnabled} />
+          </ChatComposer>
           <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
             Mode: {agentEnabled ? "Agent workflow" : "ChatGPT-style conversation"}
           </p>
