@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef, useEffect } from "react";
 import AgentToggle from "@/components/agent-toggle";
 import ChatComposer from "@/components/chat-composer";
 import AgentFlowVisualizer from "@/components/agent-flow-visualizer";
@@ -31,6 +31,16 @@ export default function ConversationPage() {
     () => messages.filter((message) => message.role !== "system"),
     [messages],
   );
+
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [visibleMessages]);
 
   const handleStop = () => {
     if (abortController) {
@@ -253,6 +263,7 @@ export default function ConversationPage() {
                   </div>
                 );
               })}
+              <div ref={messagesEndRef} />
             </div>
           </div>
           {error && (
