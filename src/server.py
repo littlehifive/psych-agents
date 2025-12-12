@@ -23,6 +23,7 @@ from theory_council.graph import (
     CouncilState,
     run_council_pipeline,
     stream_council_pipeline,
+    astream_council_pipeline,
 )
 from theory_council.orchestration import InMemorySessionStore
 
@@ -191,61 +192,58 @@ def get_council_run(run_id: str) -> CouncilRunResponse:
 async def stream_council_run(payload: CouncilRunRequest) -> StreamingResponse:
     session_id = payload.session_id or uuid4().hex
 
-    def event_stream():
+    async def event_stream():
         yield _format_sse("started", {"session_id": session_id})
 
         # We need to collect the final result to store it, so we track state
         final_state: Optional[CouncilState] = None
 
-        # Iterate over the blocking generator
-        # Note: In production with many users, we'd want to offload this to a task queue
-        # or use run_in_executor to avoid blocking the thread if not using async graph.
-        # Here we rely on FastAPI threading the sync generator response.
-        history_dicts = [m.to_dict() for m in (payload.chat_history or [])]
-        for state in stream_council_pipeline(
-            payload.problem,
-            metadata=payload.metadata,
-            chat_history=history_dicts,
-        ):
-            final_state = state
-            # Emit the NEWEST trace if present
-            traces = state.get("agent_traces") or []
-            if traces:
-                latest_trace = traces[-1]
-                # We can construct a run_id immediately or wait?
-                # The prompt implies we need a run_id for the trace event.
-                # Let's generate one upfront.
-                temp_run_id = "pending-run"
-                yield _format_sse("trace", {"trace": latest_trace, "run_id": temp_run_id})
+        try:
+            # Iterate over the async generator
+            # This allows proper cancellation if the client disconnects
+            history_dicts = [m.to_dict() for m in (payload.chat_history or [])]
+            async for state in astream_council_pipeline(
+                payload.problem,
+                metadata=payload.metadata,
+                chat_history=history_dicts,
+            ):
+                final_state = state
+                # Emit the NEWEST trace if present
+                traces = state.get("agent_traces") or []
+                if traces:
+                    latest_trace = traces[-1]
+                    temp_run_id = "pending-run"
+                    yield _format_sse("trace", {"trace": latest_trace, "run_id": temp_run_id})
 
-        if final_state:
-            # Reconstruct the full pipeline result
-            final_text = (final_state.get("final_synthesis") or "").strip()
-            # We need to import _parse_integrator_sections or duplicate logic.
-            # Ideally run_council_pipeline logic should be reused.
-            # For now, let's just minimal reconstruction or assume client handles partials?
-            # Client expects "complete" event with "CouncilRunResponse".
-            # We must save the run to DB/Memory.
-            from theory_council.graph import _parse_integrator_sections  # lazy import or move helper
+            if final_state:
+                # Reconstruct the full pipeline result
+                final_text = (final_state.get("final_synthesis") or "").strip()
+                from theory_council.graph import _parse_integrator_sections
 
-            sections = _parse_integrator_sections(final_text)
-            full_result: CouncilPipelineResult = {
-                "raw_problem": payload.problem,
-                "framed_problem": final_state.get("framed_problem"),
-                "im_summary": final_state.get("im_summary"),
-                "theory_outputs": final_state.get("theory_outputs") or {},
-                "debate_summary": final_state.get("debate_summary"),
-                "theory_ranking": final_state.get("theory_ranking"),
-                "final_synthesis": final_text,
-                "sections": sections,
-                "agent_traces": final_state.get("agent_traces") or [],
-            }
-            
-            run_id = _store_run(full_result, session_id=session_id)
-            SESSION_STORE.record_council_run(session_id, run_id, full_result)
-            
-            response_payload = _make_council_run_response(run_id, full_result, session_id)
-            yield _format_sse("complete", {"run": response_payload.model_dump()})
+                sections = _parse_integrator_sections(final_text)
+                full_result: CouncilPipelineResult = {
+                    "raw_problem": payload.problem,
+                    "framed_problem": final_state.get("framed_problem"),
+                    "im_summary": final_state.get("im_summary"),
+                    "theory_outputs": final_state.get("theory_outputs") or {},
+                    "debate_summary": final_state.get("debate_summary"),
+                    "theory_ranking": final_state.get("theory_ranking"),
+                    "final_synthesis": final_text,
+                    "sections": sections,
+                    "agent_traces": final_state.get("agent_traces") or [],
+                }
+                
+                run_id = _store_run(full_result, session_id=session_id)
+                SESSION_STORE.record_council_run(session_id, run_id, full_result)
+                
+                response_payload = _make_council_run_response(run_id, full_result, session_id)
+                yield _format_sse("complete", {"run": response_payload.model_dump()})
+
+        except asyncio.CancelledError:
+            logger.info("Client disconnected, stream cancelled.")
+            # We explicitly raise so FastAPI knows it was cancelled, though usually it handles it.
+            # LangGraph's astream should have caught this and stopped the graph.
+            raise
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 

@@ -580,6 +580,40 @@ def stream_council_pipeline(
             yield state
 
 
+async def astream_council_pipeline(
+    problem: str,
+    *,
+    metadata: Optional[Dict[str, Any]] = None,
+    chat_history: Optional[List[Dict[str, str]]] = None,
+    app: Optional[Any] = None,
+) -> Any:  # AsyncIterator[CouncilState] but typing can be tricky with async gens
+    """
+    Async generator that yields updates from the Council pipeline as agents complete.
+    Allows for cancellation propagation.
+    """
+    initial_state: CouncilState = {
+        "raw_problem": problem,
+        "framed_problem": None,
+        "im_summary": None,
+        "theory_outputs": {},
+        "debate_summary": None,
+        "theory_ranking": None,
+        "final_synthesis": None,
+        "agent_traces": [],
+        "chat_history": chat_history or [],
+    }
+
+    compiled = app or get_app()
+    invoke_kwargs: Dict[str, Any] = {}
+    if metadata:
+        invoke_kwargs["config"] = {"metadata": metadata}
+
+    async for step_output in compiled.astream(initial_state, **invoke_kwargs):
+        # step_output is like {"node_name": updated_state}
+        for _, state in step_output.items():
+            yield state
+
+
 __all__ = [
     "AgentTrace",
     "CouncilState",
@@ -598,6 +632,7 @@ __all__ = [
     "get_app",
     "run_council_pipeline",
     "stream_council_pipeline",
+    "astream_council_pipeline",
 ]
 
 
