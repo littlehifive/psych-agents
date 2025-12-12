@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Literal, Optional, TypedDict
 
 from .config import DEFAULT_MODEL, DEFAULT_TEMPERATURE, get_llm
+from .rag import query_context, format_context_for_prompt
 
 ChatRole = Literal["system", "user", "assistant"]
 
@@ -56,6 +57,25 @@ def generate_chat_response(
     current_messages = list(messages)
     if not current_messages or current_messages[0]["role"] != "system":
         current_messages.insert(0, {"role": "system", "content": GENERAL_CHAT_SYSTEM_PROMPT})
+
+    # RAG Integration
+    last_user_msg = next((m for m in reversed(current_messages) if m["role"] == "user"), None)
+    if last_user_msg:
+        try:
+            chunks = query_context(last_user_msg["content"])
+            if chunks:
+                context_str = format_context_for_prompt(chunks)
+                # Insert context as a system message right before the history or appended to system prompt
+                # To ensure it is seen as "fresh" info, we can append it to the system prompt or add a new system message
+                # Let's add it as a new system message after the main one
+                current_messages.insert(1, {
+                    "role": "system",
+                    "content": f"{context_str}\n\nINSTRUCTION: Use the above context to answer the user's question if relevant. "
+                               "Cite the source PDFs and page numbers explicitly (e.g., [Bandura, 1977, p.5]) when using this information."
+                })
+        except Exception as e:
+            # Fallback if RAG fails, don't break the chat
+            print(f"RAG retrieval failed: {e}")
 
     llm = get_llm(
         model=model or DEFAULT_CHAT_MODEL,
