@@ -10,8 +10,15 @@ import type { ChatMessage, CouncilResult } from "@/lib/types";
 const INITIAL_ASSISTANT_MESSAGE: ChatMessage = {
   role: "assistant",
   content:
-    "Hi! I’m the Theory Council Studio. Ask anything about your intervention challenge. Flip the Agent toggle if you want the full multi-agent workflow.",
+    "Welcome to the Agentic Researcher Studio.\n\nI am designed to help NGO researchers apply agency-based theories to your intervention development work.\n\n• **Learning Mode (Agent Off)**: Ask questions to explore concepts like agency, self-efficacy, and behavior change theories.\n• **Council Mode (Agent On)**: Toggle the agent switch to convene a council of psychologists who will debate and design rigorous solutions for your specific problem.\n\nHow can I assist you today?",
 };
+
+const STARTER_QUESTIONS = [
+  "What is agency-based intervention?",
+  "Explain Self-Determination Theory",
+  "How do I increase community ownership?",
+  "Help me design a youth program"
+];
 
 export default function ConversationPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -232,15 +239,13 @@ export default function ConversationPage() {
       <header className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <p className="text-sm font-semibold uppercase tracking-[0.2em] text-brand-600">
-            Theory Council Studio
+            Agentic Researcher Studio
           </p>
           <h1 className="text-3xl font-bold text-slate-900">
-            Continuous Conversation + Agent Reasoning
+            Design stronger interventions by putting agency at the center
           </h1>
           <p className="max-w-2xl text-sm text-slate-600">
-            By default you’re chatting with a fast GPT assistant. Toggle the
-            Agent switch for a full multi-agent Intervention Mapping analysis—
-            we’ll show you every step, then return to natural chat automatically.
+            Built for NGO researchers, Agentic Researcher Studio bridges theory and practice, helping you explore agency-related theories, translate them into actionable designs, and tackle real-world problems. Chat to learn core concepts, or activate the Theory Council to convene expert perspectives for deep, structured intervention design.
           </p>
         </div>
       </header>
@@ -263,6 +268,19 @@ export default function ConversationPage() {
                   </div>
                 );
               })}
+              {messages.length === 1 && (
+                <div className="mt-4 flex flex-wrap gap-2 px-1">
+                  {STARTER_QUESTIONS.map((q) => (
+                    <button
+                      key={q}
+                      onClick={() => handleSend(q)}
+                      className="rounded-full border border-brand-100 bg-brand-50 px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-100 hover:text-brand-800 transition-colors"
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div ref={messagesEndRef} />
             </div>
           </div>

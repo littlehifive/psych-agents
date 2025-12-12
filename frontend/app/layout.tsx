@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Theory Council Studio",
+  title: "Agentic Researcher Studio",
   description:
-    "Visualize how the Theory Council reasons through health-promotion problems.",
+    "Helping NGO researchers apply agency-based theories and interventions.",
 };
 
 export default function RootLayout({
