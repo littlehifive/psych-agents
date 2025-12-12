@@ -42,18 +42,11 @@ GUIDANCE ON CLARIFICATION & AGENT MODE RECOMMENDATION:
 """
 
 
-def generate_chat_response(
-    messages: List[ChatMessage],
-    *,
-    model: Optional[str] = None,
-    temperature: Optional[float] = None,
-    metadata: Optional[Dict[str, Any]] = None,
-) -> ChatResult:
+
+def prepare_chat_messages(messages: List[ChatMessage]) -> List[ChatMessage]:
     """
-    Return a short GPT-only response so the UI can continue a conversation
-    without spinning up the multi-agent workflow.
+    Inject system prompt and RAG context into the message history.
     """
-    # Ensure our specialized system prompt is present if the conversation doesn't have one
     current_messages = list(messages)
     if not current_messages or current_messages[0]["role"] != "system":
         current_messages.insert(0, {"role": "system", "content": GENERAL_CHAT_SYSTEM_PROMPT})
@@ -65,9 +58,6 @@ def generate_chat_response(
             chunks = query_context(last_user_msg["content"])
             if chunks:
                 context_str = format_context_for_prompt(chunks)
-                # Insert context as a system message right before the history or appended to system prompt
-                # To ensure it is seen as "fresh" info, we can append it to the system prompt or add a new system message
-                # Let's add it as a new system message after the main one
                 current_messages.insert(1, {
                     "role": "system",
                     "content": f"{context_str}\n\nINSTRUCTION: Use the above context to answer the user's question if relevant. "
@@ -76,6 +66,21 @@ def generate_chat_response(
         except Exception as e:
             # Fallback if RAG fails, don't break the chat
             print(f"RAG retrieval failed: {e}")
+            
+    return current_messages
+
+
+def generate_chat_response(
+    messages: List[ChatMessage],
+    *,
+    model: Optional[str] = None,
+    temperature: Optional[float] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> ChatResult:
+    """
+    Return a short GPT-only response (synchronous).
+    """
+    current_messages = prepare_chat_messages(messages)
 
     llm = get_llm(
         model=model or DEFAULT_CHAT_MODEL,
@@ -97,5 +102,37 @@ def generate_chat_response(
     }
 
 
-__all__ = ["ChatMessage", "ChatResult", "generate_chat_response", "GENERAL_CHAT_SYSTEM_PROMPT"]
+async def astream_chat_response(
+    messages: List[ChatMessage],
+    *,
+    model: Optional[str] = None,
+    temperature: Optional[float] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+):
+    """
+    Async generator that yields chunks for streaming.
+    """
+    current_messages = prepare_chat_messages(messages)
+
+    llm = get_llm(
+        model=model or DEFAULT_CHAT_MODEL,
+        temperature=temperature if temperature is not None else DEFAULT_CHAT_TEMPERATURE,
+    )
+
+    invoke_kwargs: Dict[str, Any] = {}
+    if metadata:
+        invoke_kwargs["config"] = {"metadata": metadata}
+
+    async for chunk in llm.astream(current_messages, **invoke_kwargs):
+        if chunk.content:
+            yield chunk.content
+
+
+__all__ = [
+    "ChatMessage", 
+    "ChatResult", 
+    "generate_chat_response", 
+    "astream_chat_response", 
+    "GENERAL_CHAT_SYSTEM_PROMPT"
+]
 

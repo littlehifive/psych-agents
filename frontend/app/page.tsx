@@ -136,31 +136,81 @@ export default function ConversationPage() {
       return;
     }
 
-    // Standard chat flow (non-streaming or legacy)
+    // Standard chat flow (streaming)
     try {
-      const response = await sendConversation({
-        messages: pendingMessages,
-        agent_enabled: agentEnabled,
-        session_id: sessionId,
+      const response = await fetch(`${process.env.NEXT_PUBLIC_COUNCIL_API || "http://localhost:8000"}/conversation/send/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          messages: pendingMessages,
+          agent_enabled: false,
+          session_id: sessionId,
+        }),
       });
-      setSessionId(response.session_id);
-      setMessages(response.messages);
 
-      // Basic chat doesn't support aborting via API client wrapper easily unless we refactor api.ts
-      // But user specifically asked for stopping the *agentic process*.
+      if (!response.ok) throw new Error("Chat stream failed");
 
-      if (response.agent_result) {
-        setAgentResult(response.agent_result);
-        setRunId(response.run_id ?? null);
-      } else {
-        setAgentResult(null);
-        setRunId(null);
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("No reader");
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let currentAssistantMessage = "";
+
+      // Add an empty assistant message to start filling
+      setMessages(prev => [...prev, { role: "assistant", content: "" }]);
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split("\n\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.startsWith("event: token")) {
+            const dataLine = line.split("\n").find(l => l.startsWith("data: "));
+            if (dataLine) {
+              const data = JSON.parse(dataLine.slice(6));
+              currentAssistantMessage += data.chunk;
+              setMessages(prev => {
+                const msgs = [...prev];
+                msgs[msgs.length - 1] = { role: "assistant", content: currentAssistantMessage };
+                return msgs;
+              });
+            }
+          } else if (line.startsWith("event: complete")) {
+            const dataLine = line.split("\n").find(l => l.startsWith("data: "));
+            if (dataLine) {
+              const data = JSON.parse(dataLine.slice(6));
+              setSessionId(data.session_id);
+              // Finalize the message with exact server content
+              setMessages(prev => {
+                const msgs = [...prev];
+                msgs[msgs.length - 1] = { role: "assistant", content: data.message.content };
+                return msgs;
+              });
+            }
+          } else if (line.startsWith("event: started")) {
+            const dataLine = line.split("\n").find(l => l.startsWith("data: "));
+            if (dataLine) {
+              const data = JSON.parse(dataLine.slice(6));
+              setSessionId(data.session_id);
+            }
+          }
+        }
       }
-      if (response.auto_disable_agent) {
-        setAgentEnabled(false);
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        console.log("Chat aborted by user");
+        messages.pop();
+        return;
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to send message.");
+      console.error(err);
+      setError(err.message || "Unable to send message.");
+      setMessages(prev => prev.filter(m => m.content !== ""));
     } finally {
       setIsSending(false);
       setAbortController(null);
