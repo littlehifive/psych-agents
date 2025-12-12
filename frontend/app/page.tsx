@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, useRef, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
 import AgentToggle from "@/components/agent-toggle";
 import ChatComposer from "@/components/chat-composer";
 import AgentFlowVisualizer from "@/components/agent-flow-visualizer";
@@ -10,14 +11,13 @@ import type { ChatMessage, CouncilResult } from "@/lib/types";
 const INITIAL_ASSISTANT_MESSAGE: ChatMessage = {
   role: "assistant",
   content:
-    "Welcome to the Agentic Researcher Studio.\n\nI am designed to help NGO researchers apply agency-based theories to your intervention development work.\n\n• **Learning Mode (Agent Off)**: Ask questions to explore concepts like agency, self-efficacy, and behavior change theories.\n• **Council Mode (Agent On)**: Toggle the agent switch to convene a council of psychologists who will debate and design rigorous solutions for your specific problem.\n\nHow can I assist you today?",
+    "Welcome to the Agentic Researcher Studio.\n\nI am designed to help NGO researchers apply agency-based theories to your intervention development work.\n\n• **Learning Mode (Agent Off)**: Ask questions to explore concepts like agency, self-efficacy, and behavior change theories.\n\n• **Council Mode (Agent On)**: Toggle the agent switch to convene a council of psychologists who will debate and design rigorous solutions for your specific problem.\n\nHow can I assist you today?",
 };
 
 const STARTER_QUESTIONS = [
-  "What is agency-based intervention?",
-  "Explain Self-Determination Theory",
-  "How do I increase community ownership?",
-  "Help me design a youth program"
+  "What is an agency-based intervention?",
+  "What is a wise intervention?",
+  "How do I design a health intervention to encourage skin-to-skin practice among mothers in rural India?"
 ];
 
 export default function ConversationPage() {
@@ -259,12 +259,14 @@ export default function ConversationPage() {
                 return (
                   <div
                     key={`${message.role}-${index}-${message.content.slice(0, 12)}`}
-                    className={`max-w-3xl rounded-2xl px-4 py-3 text-sm leading-relaxed shadow ${isUser
-                      ? "self-end bg-brand-600 text-white shadow-brand-500/40"
+                    className={`max-w-3xl rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm ${isUser
+                      ? "self-end bg-slate-200 text-slate-900"
                       : "self-start bg-slate-50 text-slate-800"
                       }`}
                   >
-                    <p className="whitespace-pre-wrap">{message.content}</p>
+                    <div className="prose prose-sm max-w-none dark:prose-invert">
+                      <ReactMarkdown>{message.content}</ReactMarkdown>
+                    </div>
                   </div>
                 );
               })}
