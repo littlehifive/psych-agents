@@ -10,10 +10,11 @@ from typing import List, Optional, TypedDict
 
 from langchain_community.document_loaders import PyPDFLoader, DirectoryLoader
 from langchain_community.vectorstores import Chroma
-from langchain_openai import OpenAIEmbeddings
+# from langchain_openai import OpenAIEmbeddings # Removed
+from langchain_google_genai import GoogleGenerativeAIEmbeddings # Added
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from .config import get_langsmith_settings
+from .config import get_langsmith_settings, get_google_api_key
 
 # Paths
 # Assuming the code is running from project root or src/..
@@ -29,10 +30,8 @@ class RetrievedChunk(TypedDict):
     page: int
 
 def _get_embeddings():
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        raise ValueError("OPENAI_API_KEY not found in environment.")
-    return OpenAIEmbeddings(api_key=api_key)
+    api_key = get_google_api_key()
+    return GoogleGenerativeAIEmbeddings(model="models/text-embedding-004", google_api_key=api_key)
 
 def build_index(force_refresh: bool = False):
     """

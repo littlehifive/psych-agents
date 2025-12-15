@@ -1,35 +1,50 @@
 """
-Lightweight GPT chat helper for conversational follow-ups that do not require
-the full Theory Council pipeline.
+Lightweight Chat Helper using Google Gemini File Search (Server-Side RAG).
+Replaces previous OpenAI-based basic chat to leverage Gemini's long context and native retrieval.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Literal, Optional, TypedDict
 
-from .config import DEFAULT_MODEL, DEFAULT_TEMPERATURE, get_llm
-from .rag import query_context, format_context_for_prompt
+from google import genai
+from google.genai import types
+
+from .config import get_google_api_key
+from .gemini_store import get_or_create_store
+try:
+    from langsmith import traceable
+except ImportError:
+    # Fallback no-op decorator if langsmith is missing
+    def traceable(op_name=None):
+        def decorator(func):
+            return func
+        return decorator
+
+logger = logging.getLogger("theory_council.chat")
 
 ChatRole = Literal["system", "user", "assistant"]
-
 
 class ChatMessage(TypedDict):
     role: ChatRole
     content: str
-
-
+    
 class ChatResult(TypedDict, total=False):
     response: str
     messages: List[ChatMessage]
     model: str
-
-
-DEFAULT_CHAT_MODEL = DEFAULT_MODEL
-DEFAULT_CHAT_TEMPERATURE = min(0.5, DEFAULT_TEMPERATURE)
-
+    
+DEFAULT_CHAT_MODEL = "gemini-2.5-flash"
 
 GENERAL_CHAT_SYSTEM_PROMPT = """
 You are an expert psychological theory assistant helping researchers design social interventions.
-Your goal is to help them apply theories (like SCT, SDT, TPB, etc.) practically to the interventions they are designing in the social sector.
+Your goal is to help them apply theories (like SCT, SDT, TPB, etc.) practically.
+
+CONTEXT INSTRUCTIONS:
+You have access to a 'FileSearch' tool containing the user's uploaded context documents (PDFs).
+- ALWAYS search the files when the user asks a question about specific theories, definitions, or the content of the uploaded documents.
+- If the files contain the answer, cite the source using the tool's citation format.
+- If the files do not contain the answer, rely on your general knowledge but mention that it's not in the context.
 
 GUIDANCE ON CLARIFICATION & AGENT MODE RECOMMENDATION:
 1. If the user presents a vague or new problem (e.g., "I want to improve school lunches"), DO NOT immediately solve it. Instead, ask 3-4 structured clarifying questions to help frame the problem.
@@ -41,35 +56,33 @@ GUIDANCE ON CLARIFICATION & AGENT MODE RECOMMENDATION:
 3. Always be practical, warm, and professional.
 """
 
+def _build_gemini_client() -> genai.Client:
+    return genai.Client(api_key=get_google_api_key())
 
+def _prepare_gemini_config(target_model: str) -> types.GenerateContentConfig:
+    try:
+        client = _build_gemini_client()
+        # Find the store we synced to
+        store = get_or_create_store(client)
+        
+        file_search_tool = types.Tool(
+            file_search=types.FileSearch(
+                file_search_store_names=[store.name]
+            )
+        )
+        return types.GenerateContentConfig(
+            tools=[file_search_tool],
+            system_instruction=GENERAL_CHAT_SYSTEM_PROMPT,
+            temperature=0.3
+        )
+    except Exception as e:
+        logger.error("Failed to prepare Gemini File Search config: %s", e)
+        return types.GenerateContentConfig(
+            system_instruction=GENERAL_CHAT_SYSTEM_PROMPT,
+            temperature=0.3
+        )
 
-def prepare_chat_messages(messages: List[ChatMessage]) -> List[ChatMessage]:
-    """
-    Inject system prompt and RAG context into the message history.
-    """
-    current_messages = list(messages)
-    if not current_messages or current_messages[0]["role"] != "system":
-        current_messages.insert(0, {"role": "system", "content": GENERAL_CHAT_SYSTEM_PROMPT})
-
-    # RAG Integration
-    last_user_msg = next((m for m in reversed(current_messages) if m["role"] == "user"), None)
-    if last_user_msg:
-        try:
-            chunks = query_context(last_user_msg["content"])
-            if chunks:
-                context_str = format_context_for_prompt(chunks)
-                current_messages.insert(1, {
-                    "role": "system",
-                    "content": f"{context_str}\n\nINSTRUCTION: Use the above context to answer the user's question if relevant. "
-                               "Cite the source PDFs and page numbers explicitly (e.g., [Bandura, 1977, p.5]) when using this information."
-                })
-        except Exception as e:
-            # Fallback if RAG fails, don't break the chat
-            print(f"RAG retrieval failed: {e}")
-            
-    return current_messages
-
-
+@traceable(run_type="llm", name="Gemini Chat (Sync)")
 def generate_chat_response(
     messages: List[ChatMessage],
     *,
@@ -78,30 +91,44 @@ def generate_chat_response(
     metadata: Optional[Dict[str, Any]] = None,
 ) -> ChatResult:
     """
-    Return a short GPT-only response (synchronous).
+    Generate a response using Google Gemini (Sync).
     """
-    current_messages = prepare_chat_messages(messages)
+    client = _build_gemini_client()
+    target_model = model or DEFAULT_CHAT_MODEL
+    
+    # Format messages for Gemini
+    gemini_contents = []
+    for msg in messages:
+        if msg["role"] == "system":
+            continue
+        role = "user" if msg["role"] == "user" else "model"
+        gemini_contents.append(types.Content(role=role, parts=[types.Part(text=msg["content"])]))
+        
+    if not gemini_contents:
+        gemini_contents.append(types.Content(role="user", parts=[types.Part(text="Hello")]))
 
-    llm = get_llm(
-        model=model or DEFAULT_CHAT_MODEL,
-        temperature=temperature if temperature is not None else DEFAULT_CHAT_TEMPERATURE,
-    )
+    try:
+        response = client.models.generate_content(
+            model=target_model,
+            contents=gemini_contents,
+            config=_prepare_gemini_config(target_model)
+        )
+        content = response.text
+        return {
+            "response": content,
+            "messages": [*messages, {"role": "assistant", "content": content}],
+            "model": target_model,
+        }
+    except Exception as e:
+        logger.error("Gemini chat failed: %s", e)
+        return {
+            "response": f"Error: {e}",
+            "messages": messages, 
+            "model": target_model
+        }
 
-    invoke_kwargs: Dict[str, Any] = {}
-    if metadata:
-        invoke_kwargs["config"] = {"metadata": metadata}
 
-    response = llm.invoke(current_messages, **invoke_kwargs)
-    content = response.content.strip()
-    model_name = getattr(llm, "model_name", model or DEFAULT_CHAT_MODEL)
-
-    return {
-        "response": content,
-        "messages": [*messages, {"role": "assistant", "content": content}],
-        "model": model_name,
-    }
-
-
+@traceable(run_type="llm", name="Gemini Chat (Streaming)")
 async def astream_chat_response(
     messages: List[ChatMessage],
     *,
@@ -110,22 +137,37 @@ async def astream_chat_response(
     metadata: Optional[Dict[str, Any]] = None,
 ):
     """
-    Async generator that yields chunks for streaming.
+    Async generator for streaming responses from Gemini.
     """
-    current_messages = prepare_chat_messages(messages)
+    client = _build_gemini_client()
+    target_model = model or DEFAULT_CHAT_MODEL
+    
+    gemini_contents = []
+    for msg in messages:
+        if msg["role"] == "system":
+            continue
+        role = "user" if msg["role"] == "user" else "model"
+        gemini_contents.append(types.Content(role=role, parts=[types.Part(text=msg["content"])]))
 
-    llm = get_llm(
-        model=model or DEFAULT_CHAT_MODEL,
-        temperature=temperature if temperature is not None else DEFAULT_CHAT_TEMPERATURE,
-    )
+    if not gemini_contents:
+        gemini_contents.append(types.Content(role="user", parts=[types.Part(text="Hello")]))
 
-    invoke_kwargs: Dict[str, Any] = {}
-    if metadata:
-        invoke_kwargs["config"] = {"metadata": metadata}
-
-    async for chunk in llm.astream(current_messages, **invoke_kwargs):
-        if chunk.content:
-            yield chunk.content
+    try:
+        # Use simple iteration over the stream
+        config = _prepare_gemini_config(target_model)
+        response_stream = client.models.generate_content_stream(
+            model=target_model,
+            contents=gemini_contents,
+            config=config
+        )
+        
+        for chunk in response_stream:
+            if chunk.text:
+                yield chunk.text
+                
+    except Exception as e:
+        logger.error("Gemini streaming failed: %s", e)
+        yield f"[Error: {str(e)}]"
 
 
 __all__ = [

@@ -45,6 +45,28 @@ app = FastAPI(
     version="0.1.0",
 )
 
+@app.on_event("startup")
+async def startup_event():
+    try:
+        from theory_council.gemini_store import sync_context_files
+        import os
+        import asyncio
+        from functools import partial
+        
+        # Determine context dir relative to this file
+        PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        CONTEXT_DIR = os.path.join(PROJECT_ROOT, "context")
+
+        if os.environ.get("GOOGLE_API_KEY"):
+            logger.info("Syncing Gemini File Search Store...")
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, partial(sync_context_files, CONTEXT_DIR))
+        else:
+            logger.info("GOOGLE_API_KEY not set, skipping Gemini RAG sync.")
+            
+    except Exception as e:
+        logger.error("Failed to sync Gemini store on startup: %s", e)
+
 _default_origins = "http://localhost:3000,http://127.0.0.1:3000"
 ALLOWED_ORIGINS = [
     origin.strip()

@@ -28,6 +28,16 @@ def _require_openai_key() -> str:
     return api_key
 
 
+def get_google_api_key() -> str:
+    """
+    Ensure that GOOGLE_API_KEY is available and return it.
+    """
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key:
+        raise RuntimeError("GOOGLE_API_KEY is not set. Please configure it in your environment or .env file.")
+    return api_key
+
+
 def get_llm(model: str = DEFAULT_MODEL, temperature: float = DEFAULT_TEMPERATURE) -> ChatOpenAI:
     """
     Build a ChatOpenAI instance with the provided parameters.
