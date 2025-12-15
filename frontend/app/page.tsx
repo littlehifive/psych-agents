@@ -236,16 +236,23 @@ export default function ConversationPage() {
 
   return (
     <main className="mx-auto flex min-h-screen max-w-6xl flex-col gap-8 px-6 py-10">
-      <header className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-brand-600">
+      <header className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex flex-col gap-2">
+          <p className="w-fit bg-gradient-to-r from-brand-600 to-brand-400 bg-clip-text text-sm font-bold uppercase tracking-[0.2em] text-transparent">
             Agentic Researcher Studio
           </p>
-          <h1 className="text-3xl font-bold text-slate-900">
-            Design stronger interventions by putting agency at the center
+          <h1 className="max-w-3xl text-4xl font-extrabold tracking-tight text-slate-900 sm:text-5xl">
+            Design stronger interventions by putting{" "}
+            <span className="text-brand-600">agency at the center</span>
           </h1>
-          <p className="max-w-2xl text-sm text-slate-600">
-            Built for NGO researchers, Agentic Researcher Studio bridges theory and practice, helping you explore agency-related theories, translate them into actionable designs, and tackle real-world problems. Chat to learn core concepts, or activate the Theory Council to convene expert perspectives for deep, structured intervention design.
+          <p className="max-w-2xl text-base leading-relaxed text-slate-600 text-pretty">
+            Built for NGO researchers, <strong>Agentic Researcher Studio</strong> bridges
+            theory and practice, helping you explore agency-related theories,
+            translate them into actionable designs, and tackle real-world
+            problems. Chat to learn core concepts, or activate the{" "}
+            <span className="font-semibold text-slate-900">Theory Council</span>{" "}
+            to convene expert perspectives for deep, structured intervention
+            design.
           </p>
         </div>
       </header>
