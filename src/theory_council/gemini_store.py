@@ -6,7 +6,7 @@ import logging
 import os
 import glob
 import time
-from typing import Optional
+from typing import Optional, Dict
 
 from google import genai
 from google.genai import types
@@ -22,11 +22,11 @@ def get_gemini_client() -> genai.Client:
     api_key = get_google_api_key()
     return genai.Client(api_key=api_key)
 
-def get_or_create_store(client: genai.Client, display_name: str = "Theory Council Context") -> types.FileSearchStore:
+def get_or_create_store(client: genai.Client, display_name: str) -> types.FileSearchStore:
     """
     Finds an existing File Search Store by display name or creates a new one.
     """
-    logger.info("Checking for existing File Search Store: '%s'...", display_name)
+    # logger.info("Checking for existing File Search Store: '%s'...", display_name)
     try:
         # Note: listing might be paginated, for this demo we scan the first page/batch
         # SDK 1.55.0 usage
@@ -43,59 +43,86 @@ def get_or_create_store(client: genai.Client, display_name: str = "Theory Counci
     logger.info("Created store: %s", new_store.name)
     return new_store
 
-def sync_context_files(context_dir: str, display_name: str = "Theory Council Context") -> Optional[str]:
+def sync_context_files(source_dir: str, display_name: str) -> Optional[str]:
     """
-    Syncs all PDFs in the context_dir to the Gemini File Search Store.
+    Syncs all PDFs in the source_dir to a specific Gemini File Search Store.
     Returns the name (ID) of the store.
     """
     try:
+        if not os.path.exists(source_dir):
+            logger.warning("Directory not found: %s", source_dir)
+            return None
+
         client = get_gemini_client()
         store = get_or_create_store(client, display_name)
         
-        pdf_files = glob.glob(os.path.join(context_dir, "**/*.pdf"), recursive=True)
+        pdf_files = glob.glob(os.path.join(source_dir, "**/*.pdf"), recursive=True)
         if not pdf_files:
-            logger.info("No PDFs found in %s to sync.", context_dir)
+            logger.info("No PDFs found in %s to sync.", source_dir)
             return store.name
-
-        logger.info("Found %d PDFs in context directory. Syncing to Gemini...", len(pdf_files))
-        
-        # In a real sync, we would check if files are already in the store.
-        # But SDK doesn't offer easy 'list files in store' with filename filtering.
-        # For this version, we will just upload.
-        # Note: Creating a 'File' resource is separate from 'Importing' it to a store?
-        # The user MD says: upload_file -> import_file OR use import_file directly?
-        # User MD says: "upload existing file and import it"
-        # sample_file = client.files.upload(file='sample.txt')
-        # operation = client.file_search_stores.import_file(...)
+            
+        logger.info("Syncing %d PDFs from '%s' to store '%s'...", len(pdf_files), source_dir, display_name)
         
         for file_path in pdf_files:
             filename = os.path.basename(file_path)
-            logger.info("Processing %s...", filename)
+            # Simplistic check: just upload. In prod, check if hash exists or similar.
+            # logger.info("Processing %s...", filename)
             
             # 1. Upload File
-            # We assume we upload a fresh copy every time for now (simplifies "sync" logic)
-            # Ideally we check existence.
             uploaded_file = client.files.upload(file=file_path, config={'display_name': filename})
-            logger.info("Uploaded file resource: %s", uploaded_file.name)
+            # logger.info("Uploaded file resource: %s", uploaded_file.name)
             
             # 2. Import into Store
-            # This returns an operation
             operation = client.file_search_stores.import_file(
                 file_search_store_name=store.name,
                 file_name=uploaded_file.name
             )
             
-            # Wait for completion? User MD shows while loop.
-            # For batch uploads, waiting sequentially is slow but safe.
+            # Debug print
+            # logger.info("Operation type: %s", type(operation))
             while not operation.done:
-                time.sleep(1)
-                operation = client.operations.get(name=operation.name)
-                
-            logger.info("Import complete for %s", filename)
+                time.sleep(2)
+                # logger.info("Refreshing operation: %s", operation.name)
+                # Pass the operation object itself if the SDK expects an object with .name
+                operation = client.operations.get(operation)
 
-        logger.info("Sync complete. Store ready: %s", store.name)
+        logger.info("Sync complete for store: %s", display_name)
         return store.name
     
     except Exception as e:
-        logger.error("Failed to sync Gemini store: %s", e)
+        logger.exception("Sync failed for %s", display_name)
         return None
+
+
+# Global cache of theory key -> store name
+_THEORY_STORE_MAPPING: Dict[str, str] = {}
+
+def get_theory_store_name(theory_key: str) -> Optional[str]:
+    return _THEORY_STORE_MAPPING.get(theory_key)
+
+def sync_all_theory_stores(base_context_dir: str) -> Dict[str, str]:
+    """
+    Syncs the 5 theory folders + generic context to their respective stores.
+    Returns a dict mapping {theory_key: store_name}.
+    """
+    # Map subdirectory -> (Theory Key, Display Name)
+    mapping = {
+        "Intervention Mapping": ("im_anchor", "Theory Council - IM"),
+        "Social Cognitive Theory": ("sct", "Theory Council - SCT"),
+        "Self Determination Theory": ("sdt", "Theory Council - SDT"),
+        "Wise Intervention": ("wise", "Theory Council - Wise"),
+        "Theory of Planned Behavior": ("ra", "Theory Council - RA"),
+        "Ecological Theories & Implementation Science": ("env_impl", "Theory Council - EnvImpl"),
+    }
+    
+    results = {}
+    for sub, (key, name) in mapping.items():
+        dir_path = os.path.join(base_context_dir, sub)
+        store_name = sync_context_files(dir_path, name)
+        if store_name:
+            results[key] = store_name
+            # Update global cache
+            _THEORY_STORE_MAPPING[key] = store_name
+
+    logger.info("All theory stores synced: %s", results)
+    return results

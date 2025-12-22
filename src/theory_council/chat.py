@@ -121,7 +121,7 @@ def _prepare_gemini_config(target_model: str) -> types.GenerateContentConfig:
     try:
         client = _build_gemini_client()
         # Find the store we synced to
-        store = get_or_create_store(client)
+        store = get_or_create_store(client, display_name="Theory Council Context")
         
         file_search_tool = types.Tool(
             file_search=types.FileSearch(

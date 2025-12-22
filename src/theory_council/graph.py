@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Optional, TypedDict, Iterator
 from langgraph.graph import END, StateGraph
 
 from .config import get_integrator_llm, get_llm
+from .gemini_llm import GeminiLCWrapper
+from .gemini_store import get_theory_store_name
 from .personas import (
     DEBATE_MODERATOR_SYSTEM_PROMPT,
     ENV_IMPL_AGENT_SYSTEM_PROMPT,
@@ -154,8 +156,19 @@ def _combined_theory_outputs(state: CouncilState) -> str:
     return "\n\n".join(combined) if combined else "(no theory outputs yet)"
 
 
+
+def get_gemini_agent(theory_key: Optional[str] = None) -> GeminiLCWrapper:
+    """
+    Factory for Gemini agents with optional RAG store attachment.
+    """
+    store_name = None
+    if theory_key:
+        store_name = get_theory_store_name(theory_key)
+    return GeminiLCWrapper(store_name=store_name)
+
+
 def problem_framer(state: CouncilState) -> CouncilState:
-    llm = get_llm()
+    llm = get_gemini_agent()  # No RAG
     started = _now()
     
     # Format chat history if present
@@ -190,7 +203,7 @@ def problem_framer(state: CouncilState) -> CouncilState:
 
 
 def im_anchor_agent(state: CouncilState) -> CouncilState:
-    llm = get_llm()
+    llm = get_gemini_agent("im_anchor")
     started = _now()
     messages = [
         {"role": "system", "content": IM_ANCHOR_SYSTEM_PROMPT},
@@ -212,7 +225,7 @@ def im_anchor_agent(state: CouncilState) -> CouncilState:
 
 
 def sct_agent(state: CouncilState) -> CouncilState:
-    llm = get_llm()
+    llm = get_gemini_agent("sct")
     started = _now()
     messages = [
         {"role": "system", "content": SCT_AGENT_SYSTEM_PROMPT},
@@ -236,7 +249,7 @@ def sct_agent(state: CouncilState) -> CouncilState:
 
 
 def sdt_agent(state: CouncilState) -> CouncilState:
-    llm = get_llm()
+    llm = get_gemini_agent("sdt")
     started = _now()
     messages = [
         {"role": "system", "content": SDT_AGENT_SYSTEM_PROMPT},
@@ -260,7 +273,7 @@ def sdt_agent(state: CouncilState) -> CouncilState:
 
 
 def wise_agent(state: CouncilState) -> CouncilState:
-    llm = get_llm()
+    llm = get_gemini_agent("wise")
     started = _now()
     messages = [
         {"role": "system", "content": WISE_AGENT_SYSTEM_PROMPT},
@@ -284,7 +297,7 @@ def wise_agent(state: CouncilState) -> CouncilState:
 
 
 def ra_agent(state: CouncilState) -> CouncilState:
-    llm = get_llm()
+    llm = get_gemini_agent("ra")
     started = _now()
     messages = [
         {"role": "system", "content": RA_AGENT_SYSTEM_PROMPT},
@@ -308,7 +321,7 @@ def ra_agent(state: CouncilState) -> CouncilState:
 
 
 def env_impl_agent(state: CouncilState) -> CouncilState:
-    llm = get_llm()
+    llm = get_gemini_agent("env_impl")
     started = _now()
     messages = [
         {"role": "system", "content": ENV_IMPL_AGENT_SYSTEM_PROMPT},
@@ -332,7 +345,7 @@ def env_impl_agent(state: CouncilState) -> CouncilState:
 
 
 def debate_moderator(state: CouncilState) -> CouncilState:
-    llm = get_llm()
+    llm = get_gemini_agent()  # No RAG
     started = _now()
     theories_text = _combined_theory_outputs(state)
     messages = [
@@ -364,7 +377,7 @@ def debate_moderator(state: CouncilState) -> CouncilState:
 
 
 def theory_selector(state: CouncilState) -> CouncilState:
-    llm = get_llm()
+    llm = get_gemini_agent()  # No RAG
     started = _now()
     theories_text = _combined_theory_outputs(state)
     messages = [
@@ -398,7 +411,7 @@ def theory_selector(state: CouncilState) -> CouncilState:
 
 
 def integrator(state: CouncilState) -> CouncilState:
-    llm = get_integrator_llm()
+    llm = get_gemini_agent()  # No RAG, replacing get_integrator_llm()
     started = _now()
     theories_text = _combined_theory_outputs(state)
     messages = [
