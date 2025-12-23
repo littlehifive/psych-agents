@@ -11,6 +11,13 @@ export interface ConversationResponse {
   messages: ChatMessage[];
 }
 
+export interface StoredConversation {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+  updatedAt: number;
+}
+
 export interface ConversationRequestPayload {
   messages: ChatMessage[];
   session_id?: string;
