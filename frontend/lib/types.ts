@@ -18,6 +18,18 @@ export interface StoredConversation {
   updatedAt: number;
 }
 
+export interface LibraryItem {
+  id: string;
+  question: string;
+  answer: string;
+  citations?: string;
+  title: string;
+  summary: string;
+  theme: string;
+  tags: string[];
+  createdAt: number;
+}
+
 export interface ConversationRequestPayload {
   messages: ChatMessage[];
   session_id?: string;

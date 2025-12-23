@@ -16,11 +16,25 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from theory_council.chat import ChatMessage as ChatMessageDict, astream_chat_response
+from theory_council.chat import ChatMessage as ChatMessageDict, astream_chat_response, organize_library_item
 from theory_council.config import get_langsmith_settings
 
 logger = logging.getLogger("theory_council.server")
 logging.basicConfig(level=logging.INFO)
+
+# In-memory store for Library items
+class LibraryItem(BaseModel):
+    id: str
+    question: str
+    answer: str
+    citations: Optional[str] = None
+    title: str
+    summary: str
+    theme: str
+    tags: List[str]
+    createdAt: int
+
+LIBRARY: List[LibraryItem] = []
 
 langsmith_settings = get_langsmith_settings()
 for key, value in langsmith_settings.items():
@@ -88,6 +102,15 @@ class ConversationRequest(BaseModel):
         description="Conversation/session identifier.",
     )
 
+class LibraryCreateRequest(BaseModel):
+    question: str
+    answer: str
+    citations: Optional[str] = None
+
+class LibraryUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    theme: Optional[str] = None
+    tags: Optional[List[str]] = None
 
 def _format_sse(event: str, payload: Dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
@@ -125,6 +148,57 @@ async def stream_conversation_endpoint(payload: ConversationRequest) -> Streamin
             yield _format_sse("error", {"detail": str(e)})
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.get("/library", response_model=List[LibraryItem])
+def list_library():
+    return LIBRARY
+
+@app.post("/library", response_model=LibraryItem)
+async def create_library_item(payload: LibraryCreateRequest):
+    import time
+    # Call Gemini to organize
+    try:
+        org_data = organize_library_item(payload.question, payload.answer, payload.citations)
+    except Exception as e:
+        logger.error(f"Failed to organize library item: {e}")
+        org_data = {
+            "title": payload.question[:50],
+            "summary": payload.answer[:200],
+            "theme": "Other",
+            "tags": ["saved"]
+        }
+    
+    item = LibraryItem(
+        id=uuid4().hex,
+        question=payload.question,
+        answer=payload.answer,
+        citations=payload.citations,
+        title=org_data.get("title", "Saved Response"),
+        summary=org_data.get("summary", ""),
+        theme=org_data.get("theme", "Other"),
+        tags=org_data.get("tags", []),
+        createdAt=int(time.time() * 1000)
+    )
+    
+    LIBRARY.append(item)
+    return item
+
+@app.delete("/library/{item_id}")
+def delete_library_item(item_id: str):
+    global LIBRARY
+    LIBRARY = [item for item in LIBRARY if item.id != item_id]
+    return {"status": "ok"}
+
+@app.patch("/library/{item_id}", response_model=LibraryItem)
+def update_library_item(item_id: str, payload: LibraryUpdateRequest):
+    for item in LIBRARY:
+        if item.id == item_id:
+            if payload.title is not None: item.title = payload.title
+            if payload.theme is not None: item.theme = payload.theme
+            if payload.tags is not None: item.tags = payload.tags
+            return item
+    raise HTTPException(status_code=404, detail="Item not found")
 
 
 __all__ = ["app"]

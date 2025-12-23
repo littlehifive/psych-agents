@@ -1,24 +1,28 @@
 "use client";
 
 import { StoredConversation } from "@/lib/types";
-import { Plus, MessageSquare } from "lucide-react";
+import { Plus, MessageSquare, BookOpen, MessageCircle } from "lucide-react";
 
 interface SidebarProps {
     conversations: StoredConversation[];
     activeId?: string;
+    activeTab: "chat" | "library";
     onNewChat: () => void;
     onSelectChat: (id: string) => void;
+    onTabChange: (tab: "chat" | "library") => void;
 }
 
 export default function Sidebar({
     conversations,
     activeId,
+    activeTab,
     onNewChat,
     onSelectChat,
+    onTabChange,
 }: SidebarProps) {
     return (
         <aside className="flex h-screen w-72 flex-col border-r border-slate-200 bg-slate-50/50 backdrop-blur-xl">
-            <div className="p-4">
+            <div className="p-4 flex flex-col gap-4">
                 <button
                     onClick={onNewChat}
                     className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition-all hover:bg-slate-50 hover:shadow-md active:scale-[0.98]"
@@ -26,50 +30,82 @@ export default function Sidebar({
                     <Plus className="h-5 w-5 text-brand-600" />
                     New Chat
                 </button>
+
+                <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200">
+                    <button
+                        onClick={() => onTabChange("chat")}
+                        className={`flex items-center justify-center gap-2 py-2 text-xs font-bold rounded-lg transition-all ${activeTab === "chat"
+                                ? "bg-white text-brand-600 shadow-sm"
+                                : "text-slate-500 hover:text-slate-700"
+                            }`}
+                    >
+                        <MessageCircle className="h-4 w-4" />
+                        Chat
+                    </button>
+                    <button
+                        onClick={() => onTabChange("library")}
+                        className={`flex items-center justify-center gap-2 py-2 text-xs font-bold rounded-lg transition-all ${activeTab === "library"
+                                ? "bg-white text-brand-600 shadow-sm"
+                                : "text-slate-500 hover:text-slate-700"
+                            }`}
+                    >
+                        <BookOpen className="h-4 w-4" />
+                        Library
+                    </button>
+                </div>
             </div>
 
             <div className="flex-1 overflow-y-auto px-3 pb-4">
-                <h2 className="mb-2 px-3 text-xs font-bold uppercase tracking-widest text-slate-400">
-                    Recent Chats
-                </h2>
-                <div className="flex flex-col gap-1">
-                    {conversations.length === 0 ? (
-                        <p className="px-3 py-4 text-xs italic text-slate-400">
-                            No previous chats yet
+                {activeTab === "chat" ? (
+                    <>
+                        <h2 className="mb-2 px-3 text-xs font-bold uppercase tracking-widest text-slate-400">
+                            Recent Chats
+                        </h2>
+                        <div className="flex flex-col gap-1">
+                            {conversations.length === 0 ? (
+                                <p className="px-3 py-4 text-xs italic text-slate-400">
+                                    No previous chats yet
+                                </p>
+                            ) : (
+                                conversations
+                                    .sort((a, b) => b.updatedAt - a.updatedAt)
+                                    .map((conv) => (
+                                        <button
+                                            key={conv.id}
+                                            onClick={() => onSelectChat(conv.id)}
+                                            className={`group flex items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-all ${activeId === conv.id
+                                                ? "bg-brand-50 text-brand-700 shadow-sm ring-1 ring-brand-200"
+                                                : "text-slate-600 hover:bg-slate-100/80 hover:text-slate-900"
+                                                }`}
+                                        >
+                                            <MessageSquare
+                                                className={`h-4 w-4 shrink-0 ${activeId === conv.id ? "text-brand-600" : "text-slate-400 group-hover:text-slate-500"
+                                                    }`}
+                                            />
+                                            <div className="flex flex-col overflow-hidden">
+                                                <span className="truncate text-sm font-medium">
+                                                    {conv.title || "Untitled Chat"}
+                                                </span>
+                                                <span className="text-[10px] text-slate-400">
+                                                    {new Date(conv.updatedAt).toLocaleDateString([], {
+                                                        month: "short",
+                                                        day: "numeric"
+                                                    })}
+                                                </span>
+                                            </div>
+                                        </button>
+                                    ))
+                            )}
+                        </div>
+                    </>
+                ) : (
+                    <div className="px-3 py-4 flex flex-col gap-3">
+                        <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Navigation</p>
+                        <p className="text-xs text-slate-500 leading-relaxed italic">
+                            Use the Library tab to browse intervention components you've saved from your chats.
                         </p>
-                    ) : (
-                        conversations
-                            .sort((a, b) => b.updatedAt - a.updatedAt)
-                            .map((conv) => (
-                                <button
-                                    key={conv.id}
-                                    onClick={() => onSelectChat(conv.id)}
-                                    className={`group flex items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-all ${activeId === conv.id
-                                            ? "bg-brand-50 text-brand-700 shadow-sm ring-1 ring-brand-200"
-                                            : "text-slate-600 hover:bg-slate-100/80 hover:text-slate-900"
-                                        }`}
-                                >
-                                    <MessageSquare
-                                        className={`h-4 w-4 shrink-0 ${activeId === conv.id ? "text-brand-600" : "text-slate-400 group-hover:text-slate-500"
-                                            }`}
-                                    />
-                                    <div className="flex flex-col overflow-hidden">
-                                        <span className="truncate text-sm font-medium">
-                                            {conv.title || "Untitled Chat"}
-                                        </span>
-                                        <span className="text-[10px] text-slate-400">
-                                            {new Date(conv.updatedAt).toLocaleDateString([], {
-                                                month: "short",
-                                                day: "numeric",
-                                                hour: "2-digit",
-                                                minute: "2-digit",
-                                            })}
-                                        </span>
-                                    </div>
-                                </button>
-                            ))
-                    )}
-                </div>
+                    </div>
+                )}
             </div>
 
             <div className="mt-auto border-t border-slate-200 p-4">

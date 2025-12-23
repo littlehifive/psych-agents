@@ -224,11 +224,65 @@ async def astream_chat_response(
         yield f"[Error: {str(e)}]"
 
 
+@traceable(run_type="llm", name="Gemini Library Organizer")
+def organize_library_item(
+    question: str,
+    answer: str,
+    citations: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Uses Gemini to generate organization metadata for a saved chat item.
+    """
+    client = _build_gemini_client()
+    
+    prompt = f"""
+    You are an AI librarian for the Agentic Researcher Studio.
+    I will provide a user's question and your assistant answer.
+    Your task is to organize this into a library entry.
+    
+    USER QUESTION: {question}
+    ASSISTANT ANSWER: {answer}
+    CITATIONS: {citations or "None"}
+    
+    Please provide the following in JSON format:
+    1. title: A short, descriptive title (max 6-8 words).
+    2. summary: A 1-2 sentence concise summary.
+    3. theme: Precisely one of: "SCT", "SDT", "Wise Interventions", "Intervention Mapping", or "Other".
+    4. tags: A list of 3-5 relevant keywords.
+    
+    Respond ONLY with the JSON object.
+    """
+    
+    try:
+        response = client.models.generate_content(
+            model=DEFAULT_CHAT_MODEL,
+            contents=[prompt],
+            config=types.GenerateContentConfig(
+                temperature=0.1,
+                response_mime_type="application/json"
+            )
+        )
+        # Parse JSON from response
+        text = response.text.strip()
+        import json
+        return json.loads(text)
+    except Exception as e:
+        logger.error(f"Library organization failed: {e}")
+        # Fallback logic
+        return {
+            "title": question[:50] + "..." if len(question) > 50 else question,
+            "summary": answer[:200] + "..." if len(answer) > 200 else answer,
+            "theme": "Other",
+            "tags": ["saved"]
+        }
+
+
 __all__ = [
     "ChatMessage", 
     "ChatResult", 
     "generate_chat_response", 
     "astream_chat_response", 
+    "organize_library_item",
     "GENERAL_CHAT_SYSTEM_PROMPT"
 ]
 

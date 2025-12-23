@@ -2,9 +2,11 @@
 
 import { useMemo, useState, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
+import { Bookmark, Check, Loader2 } from "lucide-react";
 import ChatComposer from "@/components/chat-composer";
 import Sidebar from "@/components/sidebar";
-import type { ChatMessage, StoredConversation } from "@/lib/types";
+import LibraryView from "@/components/library-view";
+import type { ChatMessage, StoredConversation, LibraryItem } from "@/lib/types";
 
 const INITIAL_ASSISTANT_MESSAGE: ChatMessage = {
   role: "assistant",
@@ -21,9 +23,12 @@ const STARTER_QUESTIONS = [
 export default function ConversationPage() {
   const [conversations, setConversations] = useState<StoredConversation[]>([]);
   const [activeId, setActiveId] = useState<string | undefined>(undefined);
+  const [activeTab, setActiveTab] = useState<"chat" | "library">("chat");
+  const [libraryItems, setLibraryItems] = useState<LibraryItem[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isMounted, setIsMounted] = useState(false);
+  const [savingIds, setSavingIds] = useState<Record<number, boolean>>({});
 
   const activeConversation = useMemo(
     () => conversations.find((c) => c.id === activeId),
@@ -58,6 +63,7 @@ export default function ConversationPage() {
         console.error("Failed to parse history", e);
       }
     }
+    fetchLibrary();
   }, []);
 
   // Persistence: Save to localStorage
@@ -67,13 +73,27 @@ export default function ConversationPage() {
     }
   }, [conversations, isMounted]);
 
+  const fetchLibrary = async () => {
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_COUNCIL_API || "http://localhost:8000"}/library`);
+      if (response.ok) {
+        const items = await response.json();
+        setLibraryItems(items);
+      }
+    } catch (e) {
+      console.error("Failed to fetch library", e);
+    }
+  };
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
   useEffect(() => {
-    scrollToBottom();
-  }, [visibleMessages]);
+    if (activeTab === "chat") {
+      scrollToBottom();
+    }
+  }, [visibleMessages, activeTab]);
 
   const handleStop = () => {
     if (abortControllerRef.current) {
@@ -84,16 +104,15 @@ export default function ConversationPage() {
   };
 
   const handleNewChat = () => {
-    // If current chat is empty (only initial message), don't create a new one
+    setActiveTab("chat");
     if (messages.length <= 1 && activeId) return;
-
     const newId = crypto.randomUUID();
     setActiveId(newId);
-    // Note: We don't add it to 'conversations' yet, we wait for the first user message
   };
 
   const handleSelectChat = (id: string) => {
     if (isSending) return;
+    setActiveTab("chat");
     setActiveId(id);
   };
 
@@ -107,7 +126,6 @@ export default function ConversationPage() {
           c.id === activeId ? { ...c, messages: newMessages, updatedAt: now } : c
         );
       } else {
-        // Create new entry
         const firstUserMsg = newMessages.find(m => m.role === 'user')?.content || "New Chat";
         const title = firstUserMsg.length > 40 ? firstUserMsg.slice(0, 40) + "..." : firstUserMsg;
 
@@ -123,6 +141,59 @@ export default function ConversationPage() {
     });
   };
 
+  const handleSaveToLibrary = async (index: number) => {
+    const assistantMsg = messages[index];
+    // Find the user prompt preceding this assistant message
+    let userPrompt = "";
+    for (let i = index - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') {
+        userPrompt = messages[i].content;
+        break;
+      }
+    }
+
+    setSavingIds(prev => ({ ...prev, [index]: true }));
+
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_COUNCIL_API || "http://localhost:8000"}/library`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question: userPrompt || "General Inquiry",
+          answer: assistantMsg.content,
+          citations: "" // Citations could be parsed from content if available
+        })
+      });
+
+      if (!response.ok) throw new Error("Save failed");
+
+      await fetchLibrary();
+      // Show success state briefly
+      setTimeout(() => {
+        setSavingIds(prev => {
+          const next = { ...prev };
+          delete next[index];
+          return next;
+        });
+      }, 2000);
+
+    } catch (e) {
+      console.error("Save failed", e);
+      setSavingIds(prev => ({ ...prev, [index]: false }));
+    }
+  };
+
+  const handleDeleteLibraryItem = async (id: string) => {
+    try {
+      await fetch(`${process.env.NEXT_PUBLIC_COUNCIL_API || "http://localhost:8000"}/library/${id}`, {
+        method: "DELETE"
+      });
+      fetchLibrary();
+    } catch (e) {
+      console.error("Delete failed", e);
+    }
+  };
+
   const handleSend = async (content: string) => {
     let currentId = activeId;
     if (!currentId) {
@@ -132,8 +203,6 @@ export default function ConversationPage() {
 
     const pendingMessages: ChatMessage[] = [...messages, { role: "user" as const, content }];
 
-    // Optimistic update of the conversation
-    const initialConversations = conversations;
     const existing = conversations.find(c => c.id === currentId);
     if (!existing) {
       const title = content.length > 40 ? content.slice(0, 40) + "..." : content;
@@ -173,7 +242,6 @@ export default function ConversationPage() {
       let buffer = "";
       let currentAssistantMessage = "";
 
-      // We'll update conversations state as chunks arrive
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -199,7 +267,6 @@ export default function ConversationPage() {
             const dataLine = line.split("\n").find(l => l.startsWith("data: "));
             if (dataLine) {
               const data = JSON.parse(dataLine.slice(6));
-              // Finalize
               setConversations(prev => prev.map(c =>
                 c.id === currentId
                   ? { ...c, messages: [...pendingMessages, { role: "assistant", content: data.message.content }], updatedAt: Date.now() }
@@ -210,13 +277,9 @@ export default function ConversationPage() {
         }
       }
     } catch (err: any) {
-      if (err.name === 'AbortError') {
-        console.log("Chat aborted by user");
-        return;
-      }
+      if (err.name === 'AbortError') return;
       console.error(err);
       setError(err.message || "Unable to send message.");
-      // Rollback or handle error? For now just keep what we have.
     } finally {
       setIsSending(false);
       abortControllerRef.current = null;
@@ -230,81 +293,109 @@ export default function ConversationPage() {
       <Sidebar
         conversations={conversations}
         activeId={activeId}
+        activeTab={activeTab}
         onNewChat={handleNewChat}
         onSelectChat={handleSelectChat}
+        onTabChange={setActiveTab}
       />
 
       <main className="flex flex-1 flex-col overflow-hidden">
-        <div className="mx-auto flex h-full w-full max-w-5xl flex-col gap-8 px-6 py-10">
-          <header className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
-            <div className="flex flex-col gap-2">
-              <p className="w-fit bg-gradient-to-r from-brand-600 to-brand-400 bg-clip-text text-sm font-bold uppercase tracking-[0.2em] text-transparent">
-                Agentic Researcher Studio
-              </p>
-              <h1 className="max-w-3xl text-4xl font-extrabold tracking-tight text-slate-900 sm:text-5xl">
-                Design stronger interventions by putting{" "}
-                <span className="text-brand-600">agency at the center</span>
-              </h1>
-              <p className="max-w-4xl text-sm leading-relaxed text-slate-500 text-pretty">
-                Built for NGO researchers, <strong>Agentic Researcher Studio</strong> bridges
-                theory and practice. Chat to learn core concepts and get theoretical guidance for your projects.
-              </p>
-            </div>
-          </header>
-
-          <div className="flex flex-1 flex-col gap-4 overflow-hidden">
-            <div className="flex-1 rounded-3xl border border-slate-200 bg-white/80 p-6 shadow-inner backdrop-blur overflow-hidden">
-              <div className="flex h-full flex-col gap-4 overflow-y-auto pr-2">
-                {visibleMessages.map((message, index) => {
-                  const isUser = message.role === "user";
-                  return (
-                    <div
-                      key={`${message.role}-${index}-${message.content.slice(0, 12)}`}
-                      className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm ${isUser
-                        ? "self-end bg-slate-200 text-slate-900"
-                        : "self-start bg-slate-50 text-slate-800"
-                        }`}
-                    >
-                      <div className="prose prose-sm max-w-none dark:prose-invert">
-                        <ReactMarkdown>{message.content}</ReactMarkdown>
-                      </div>
-                    </div>
-                  );
-                })}
-                {messages.length === 1 && (
-                  <div className="mt-4 flex flex-wrap gap-2 px-1">
-                    {STARTER_QUESTIONS.map((q) => (
-                      <button
-                        key={q}
-                        onClick={() => handleSend(q)}
-                        className="rounded-full border border-brand-100 bg-brand-50 px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-100 hover:text-brand-800 transition-colors"
-                      >
-                        {q}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                <div ref={messagesEndRef} />
+        {activeTab === "library" ? (
+          <LibraryView items={libraryItems} onDeleteItem={handleDeleteLibraryItem} />
+        ) : (
+          <div className="mx-auto flex h-full w-full max-w-5xl flex-col gap-8 px-6 py-10">
+            <header className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+              <div className="flex flex-col gap-2">
+                <p className="w-fit bg-gradient-to-r from-brand-600 to-brand-400 bg-clip-text text-sm font-bold uppercase tracking-[0.2em] text-transparent">
+                  Agentic Researcher Studio
+                </p>
+                <h1 className="max-w-3xl text-4xl font-extrabold tracking-tight text-slate-900 sm:text-5xl">
+                  Design stronger interventions by putting{" "}
+                  <span className="text-brand-600">agency at the center</span>
+                </h1>
+                <p className="max-w-4xl text-sm leading-relaxed text-slate-500 text-pretty">
+                  Built for NGO researchers, <strong>Agentic Researcher Studio</strong> bridges
+                  theory and practice. Chat to learn core concepts and save your favorite ideas to the library.
+                </p>
               </div>
-            </div>
-            {error && (
-              <p className="text-sm text-rose-600">
-                {error} Please try again or reload the page.
-              </p>
-            )}
-            <ChatComposer onSend={handleSend} onStop={handleStop} disabled={isSending} />
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
-                RAG-backed Theory Assistant
-              </p>
-              {activeConversation && (
-                <p className="text-[10px] text-slate-300">
-                  Session: {activeId?.slice(0, 8)} | Updated: {new Date(activeConversation.updatedAt).toLocaleTimeString()}
+            </header>
+
+            <div className="flex flex-1 flex-col gap-4 overflow-hidden">
+              <div className="flex-1 rounded-3xl border border-slate-200 bg-white/80 p-6 shadow-inner backdrop-blur overflow-hidden">
+                <div className="flex h-full flex-col gap-4 overflow-y-auto pr-2">
+                  {visibleMessages.map((message, index) => {
+                    const isUser = message.role === "user";
+                    const actualIndex = messages.indexOf(message);
+                    const isSaving = savingIds[actualIndex];
+                    const isSaved = isSaving === false; // Using boolean false to indicate "just saved"
+
+                    return (
+                      <div
+                        key={`${message.role}-${index}-${message.content.slice(0, 12)}`}
+                        className={`group relative max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm ${isUser
+                          ? "self-end bg-slate-200 text-slate-900"
+                          : "self-start bg-slate-50 text-slate-800"
+                          }`}
+                      >
+                        <div className="prose prose-sm max-w-none dark:prose-invert">
+                          <ReactMarkdown>{message.content}</ReactMarkdown>
+                        </div>
+
+                        {!isUser && (
+                          <button
+                            onClick={() => handleSaveToLibrary(actualIndex)}
+                            disabled={isSaving}
+                            className={`absolute -right-12 top-2 p-2 rounded-full border transition-all ${isSaving
+                                ? "bg-brand-50 border-brand-200 text-brand-600 cursor-wait"
+                                : "bg-white border-slate-200 text-slate-400 hover:text-brand-600 hover:border-brand-200 opacity-0 group-hover:opacity-100 shadow-sm"
+                              }`}
+                            title="Save to Library"
+                          >
+                            {isSaving ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Bookmark className="h-3.5 w-3.5" />
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {messages.length === 1 && (
+                    <div className="mt-4 flex flex-wrap gap-2 px-1">
+                      {STARTER_QUESTIONS.map((q) => (
+                        <button
+                          key={q}
+                          onClick={() => handleSend(q)}
+                          className="rounded-full border border-brand-100 bg-brand-50 px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-100 hover:text-brand-800 transition-colors"
+                        >
+                          {q}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <div ref={messagesEndRef} />
+                </div>
+              </div>
+              {error && (
+                <p className="text-sm text-rose-600">
+                  {error} Please try again or reload the page.
                 </p>
               )}
+              <ChatComposer onSend={handleSend} onStop={handleStop} disabled={isSending} />
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
+                  RAG-backed Theory Assistant
+                </p>
+                {activeConversation && (
+                  <p className="text-[10px] text-slate-300">
+                    Session: {activeId?.slice(0, 8)} | Updated: {new Date(activeConversation.updatedAt).toLocaleTimeString()}
+                  </p>
+                )}
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </main>
     </div>
   );
