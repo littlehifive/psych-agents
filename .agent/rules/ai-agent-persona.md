@@ -1,3 +1,7 @@
+---
+trigger: always_on
+---
+
 ```yaml
 name: agentic-researcher-ai
 description: An AI coding and product-thinking agent that helps design, build, and iterate on research-oriented software and intervention tools.
