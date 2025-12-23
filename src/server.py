@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from theory_council.chat import ChatMessage as ChatMessageDict
+from theory_council.chat import ChatMessage as ChatMessageDict, astream_chat_response
 from theory_council.config import get_langsmith_settings
 from theory_council.conversation import ConversationOutcome, process_conversation_turn
 from theory_council.graph import (
@@ -44,6 +44,28 @@ app = FastAPI(
     description="Expose the LangGraph-based Theory Council workflow and supporting chat helpers.",
     version="0.1.0",
 )
+
+@app.on_event("startup")
+async def startup_event():
+    try:
+        from theory_council.gemini_store import sync_all_theory_stores
+        import os
+        import asyncio
+        from functools import partial
+        
+        # Determine context dir relative to this file
+        PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        CONTEXT_DIR = os.path.join(PROJECT_ROOT, "context")
+
+        if os.environ.get("GOOGLE_API_KEY"):
+            logger.info("Syncing Gemini File Search Stores...")
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, partial(sync_all_theory_stores, CONTEXT_DIR))
+        else:
+            logger.info("GOOGLE_API_KEY not set, skipping Gemini RAG sync.")
+            
+    except Exception as e:
+        logger.error("Failed to sync Gemini store on startup: %s", e)
 
 _default_origins = "http://localhost:3000,http://127.0.0.1:3000"
 ALLOWED_ORIGINS = [
@@ -277,14 +299,54 @@ def conversation_endpoint(payload: ConversationRequest) -> ConversationResponseM
     assistant_message = ChatMessageModel(**outcome["assistant_message"])
 
     return ConversationResponseModel(
-        session_id=outcome["session_id"],
-        mode=outcome["mode"],
-        assistant_message=assistant_message,
-        messages=response_messages,
-        agent_result=agent_result_model,
         run_id=run_id,
         auto_disable_agent=outcome.get("auto_disable_agent", False),
     )
+
+
+@app.post("/conversation/send/stream")
+async def stream_conversation_endpoint(payload: ConversationRequest) -> StreamingResponse:
+    session_id = payload.session_id or uuid4().hex
+    # For now, this endpoint assumes agent_enabled=False or is for the "chat" mode.
+    # If the user wants the agent, they should use /council/run/stream.
+    
+    # We update session history *optimistically* here, or we can wait until completion.
+    # To be safe, usually we append the user message first.
+    user_msg_dict = [msg.to_dict() for msg in payload.messages]
+    # We only really need to append the *new* user message if it's not in store,
+    # but the simplest valid approach for this app's architecture is to replace history 
+    # with what the client sees, as the client is the source of truth for history order.
+    SESSION_STORE.replace_messages(session_id, user_msg_dict)
+
+    async def event_stream():
+        # Yield session ID immediately
+        yield _format_sse("started", {"session_id": session_id})
+
+        full_content = ""
+        try:
+            async for chunk in astream_chat_response(
+                user_msg_dict, 
+                metadata=payload.metadata
+            ):
+                full_content += chunk
+                yield _format_sse("token", {"chunk": chunk})
+            
+            # Record final assistant message
+            assistant_message: ChatMessageModel = ChatMessageModel(role="assistant", content=full_content)
+            SESSION_STORE.append_message(session_id, assistant_message.to_dict())
+            
+            # Yield completion event with the full message object so UI can finalize state
+            # matching the shape expected by non-streaming or agent-streaming completion
+            yield _format_sse("complete", {
+                "session_id": session_id,
+                "message": assistant_message.model_dump()
+            })
+
+        except Exception as e:
+            logger.error(f"Chat stream failed: {e}")
+            yield _format_sse("error", {"detail": str(e)})
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 __all__ = ["app"]

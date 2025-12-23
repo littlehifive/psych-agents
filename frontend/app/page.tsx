@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
 import AgentToggle from "@/components/agent-toggle";
 import ChatComposer from "@/components/chat-composer";
 import AgentFlowVisualizer from "@/components/agent-flow-visualizer";
@@ -10,8 +11,14 @@ import type { ChatMessage, CouncilResult } from "@/lib/types";
 const INITIAL_ASSISTANT_MESSAGE: ChatMessage = {
   role: "assistant",
   content:
-    "Hi! I’m the Theory Council Studio. Ask anything about your intervention challenge. Flip the Agent toggle if you want the full multi-agent workflow.",
+    "Welcome to the Agentic Researcher Studio.\n\nI am designed to help NGO researchers apply agency-based theories to your intervention development work.\n\n• **Learning Mode (Agent Off)**: Ask questions to explore concepts like agency, self-efficacy, and behavior change theories.\n\n• **Council Mode (Agent On)**: Toggle the agent switch to convene a council of psychologists who will debate and design rigorous solutions for your specific problem.\n\nHow can I assist you today?",
 };
+
+const STARTER_QUESTIONS = [
+  "What is an agency-based intervention?",
+  "What is a wise intervention?",
+  "How do I design a health intervention to encourage skin-to-skin practice among mothers in rural India?"
+];
 
 export default function ConversationPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -31,6 +38,16 @@ export default function ConversationPage() {
     () => messages.filter((message) => message.role !== "system"),
     [messages],
   );
+
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [visibleMessages]);
 
   const handleStop = () => {
     if (abortController) {
@@ -136,31 +153,81 @@ export default function ConversationPage() {
       return;
     }
 
-    // Standard chat flow (non-streaming or legacy)
+    // Standard chat flow (streaming)
     try {
-      const response = await sendConversation({
-        messages: pendingMessages,
-        agent_enabled: agentEnabled,
-        session_id: sessionId,
+      const response = await fetch(`${process.env.NEXT_PUBLIC_COUNCIL_API || "http://localhost:8000"}/conversation/send/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          messages: pendingMessages,
+          agent_enabled: false,
+          session_id: sessionId,
+        }),
       });
-      setSessionId(response.session_id);
-      setMessages(response.messages);
 
-      // Basic chat doesn't support aborting via API client wrapper easily unless we refactor api.ts
-      // But user specifically asked for stopping the *agentic process*.
+      if (!response.ok) throw new Error("Chat stream failed");
 
-      if (response.agent_result) {
-        setAgentResult(response.agent_result);
-        setRunId(response.run_id ?? null);
-      } else {
-        setAgentResult(null);
-        setRunId(null);
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("No reader");
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let currentAssistantMessage = "";
+
+      // Add an empty assistant message to start filling
+      setMessages(prev => [...prev, { role: "assistant", content: "" }]);
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split("\n\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.startsWith("event: token")) {
+            const dataLine = line.split("\n").find(l => l.startsWith("data: "));
+            if (dataLine) {
+              const data = JSON.parse(dataLine.slice(6));
+              currentAssistantMessage += data.chunk;
+              setMessages(prev => {
+                const msgs = [...prev];
+                msgs[msgs.length - 1] = { role: "assistant", content: currentAssistantMessage };
+                return msgs;
+              });
+            }
+          } else if (line.startsWith("event: complete")) {
+            const dataLine = line.split("\n").find(l => l.startsWith("data: "));
+            if (dataLine) {
+              const data = JSON.parse(dataLine.slice(6));
+              setSessionId(data.session_id);
+              // Finalize the message with exact server content
+              setMessages(prev => {
+                const msgs = [...prev];
+                msgs[msgs.length - 1] = { role: "assistant", content: data.message.content };
+                return msgs;
+              });
+            }
+          } else if (line.startsWith("event: started")) {
+            const dataLine = line.split("\n").find(l => l.startsWith("data: "));
+            if (dataLine) {
+              const data = JSON.parse(dataLine.slice(6));
+              setSessionId(data.session_id);
+            }
+          }
+        }
       }
-      if (response.auto_disable_agent) {
-        setAgentEnabled(false);
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        console.log("Chat aborted by user");
+        messages.pop();
+        return;
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to send message.");
+      console.error(err);
+      setError(err.message || "Unable to send message.");
+      setMessages(prev => prev.filter(m => m.content !== ""));
     } finally {
       setIsSending(false);
       setAbortController(null);
@@ -169,18 +236,23 @@ export default function ConversationPage() {
 
   return (
     <main className="mx-auto flex min-h-screen max-w-6xl flex-col gap-8 px-6 py-10">
-      <header className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-brand-600">
-            Theory Council Studio
+      <header className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex flex-col gap-2">
+          <p className="w-fit bg-gradient-to-r from-brand-600 to-brand-400 bg-clip-text text-sm font-bold uppercase tracking-[0.2em] text-transparent">
+            Agentic Researcher Studio
           </p>
-          <h1 className="text-3xl font-bold text-slate-900">
-            Continuous Conversation + Agent Reasoning
+          <h1 className="max-w-3xl text-4xl font-extrabold tracking-tight text-slate-900 sm:text-5xl">
+            Design stronger interventions by putting{" "}
+            <span className="text-brand-600">agency at the center</span>
           </h1>
-          <p className="max-w-2xl text-sm text-slate-600">
-            By default you’re chatting with a fast GPT assistant. Toggle the
-            Agent switch for a full multi-agent Intervention Mapping analysis—
-            we’ll show you every step, then return to natural chat automatically.
+          <p className="max-w-2xl text-base leading-relaxed text-slate-600 text-pretty">
+            Built for NGO researchers, <strong>Agentic Researcher Studio</strong> bridges
+            theory and practice, helping you explore agency-related theories,
+            translate them into actionable designs, and tackle real-world
+            problems. Chat to learn core concepts, or activate the{" "}
+            <span className="font-semibold text-slate-900">Theory Council</span>{" "}
+            to convene expert perspectives for deep, structured intervention
+            design.
           </p>
         </div>
       </header>
@@ -194,15 +266,31 @@ export default function ConversationPage() {
                 return (
                   <div
                     key={`${message.role}-${index}-${message.content.slice(0, 12)}`}
-                    className={`max-w-3xl rounded-2xl px-4 py-3 text-sm leading-relaxed shadow ${isUser
-                      ? "self-end bg-brand-600 text-white shadow-brand-500/40"
+                    className={`max-w-3xl rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm ${isUser
+                      ? "self-end bg-slate-200 text-slate-900"
                       : "self-start bg-slate-50 text-slate-800"
                       }`}
                   >
-                    <p className="whitespace-pre-wrap">{message.content}</p>
+                    <div className="prose prose-sm max-w-none dark:prose-invert">
+                      <ReactMarkdown>{message.content}</ReactMarkdown>
+                    </div>
                   </div>
                 );
               })}
+              {messages.length === 1 && (
+                <div className="mt-4 flex flex-wrap gap-2 px-1">
+                  {STARTER_QUESTIONS.map((q) => (
+                    <button
+                      key={q}
+                      onClick={() => handleSend(q)}
+                      className="rounded-full border border-brand-100 bg-brand-50 px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-100 hover:text-brand-800 transition-colors"
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div ref={messagesEndRef} />
             </div>
           </div>
           {error && (

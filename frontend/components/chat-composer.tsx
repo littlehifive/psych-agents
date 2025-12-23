@@ -29,9 +29,13 @@ export function ChatComposer({ onSend, onStop, disabled, placeholder, children }
     const trimmed = message.trim();
     if (!trimmed) return;
     setIsSending(true);
+    setMessage(""); // Optimistic clear
     try {
       await onSend(trimmed);
-      setMessage("");
+    } catch (e) {
+      // Optional: restore message on error?
+      // For now, keep it cleared to avoid duplicates if partial send worked
+      console.error("Send failed", e);
     } finally {
       setIsSending(false);
     }
