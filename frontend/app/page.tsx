@@ -346,8 +346,8 @@ export default function ConversationPage() {
                             onClick={() => handleSaveToLibrary(actualIndex)}
                             disabled={isSaving}
                             className={`absolute -right-12 top-2 p-2 rounded-full border transition-all ${isSaving
-                                ? "bg-brand-50 border-brand-200 text-brand-600 cursor-wait"
-                                : "bg-white border-slate-200 text-slate-400 hover:text-brand-600 hover:border-brand-200 opacity-0 group-hover:opacity-100 shadow-sm"
+                              ? "bg-brand-50 border-brand-200 text-brand-600 cursor-wait"
+                              : "bg-white border-slate-200 text-slate-400 hover:text-brand-600 hover:border-brand-200 opacity-0 group-hover:opacity-100 shadow-sm"
                               }`}
                             title="Save to Library"
                           >
@@ -361,7 +361,7 @@ export default function ConversationPage() {
                       </div>
                     );
                   })}
-                  {messages.length === 1 && (
+                  {messages.length <= 1 && !isSending && (
                     <div className="mt-4 flex flex-wrap gap-2 px-1">
                       {STARTER_QUESTIONS.map((q) => (
                         <button
