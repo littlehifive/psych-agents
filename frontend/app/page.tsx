@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
-import { Bookmark, Check, Loader2 } from "lucide-react";
+import { Bookmark, Check, Loader2, AlertTriangle, X } from "lucide-react";
 import ChatComposer from "@/components/chat-composer";
 import Sidebar from "@/components/sidebar";
 import LibraryView from "@/components/library-view";
@@ -29,6 +29,7 @@ export default function ConversationPage() {
   const [error, setError] = useState<string | null>(null);
   const [isMounted, setIsMounted] = useState(false);
   const [savingIds, setSavingIds] = useState<Record<number, boolean>>({});
+  const [isClearModalOpen, setIsClearModalOpen] = useState(false);
 
   const activeConversation = useMemo(
     () => conversations.find((c) => c.id === activeId),
@@ -114,6 +115,13 @@ export default function ConversationPage() {
     if (isSending) return;
     setActiveTab("chat");
     setActiveId(id);
+  };
+
+  const handleClearAllHistory = () => {
+    setConversations([]);
+    setActiveId(undefined);
+    localStorage.removeItem("psych_agents_history");
+    setIsClearModalOpen(false);
   };
 
   const updateActiveConversation = (newMessages: ChatMessage[]) => {
@@ -297,6 +305,7 @@ export default function ConversationPage() {
         onNewChat={handleNewChat}
         onSelectChat={handleSelectChat}
         onTabChange={setActiveTab}
+        onClearChats={() => setIsClearModalOpen(true)}
       />
 
       <main className="flex flex-1 flex-col overflow-hidden">
@@ -397,6 +406,52 @@ export default function ConversationPage() {
           </div>
         )}
       </main>
+
+      {/* Clear History Confirmation Modal */}
+      {isClearModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between p-4 border-b border-slate-100 bg-slate-50/50">
+              <div className="flex items-center gap-2 text-rose-600">
+                <AlertTriangle className="h-5 w-5" />
+                <h3 className="font-bold">Clear All History</h3>
+              </div>
+              <button
+                onClick={() => setIsClearModalOpen(false)}
+                className="p-1.5 rounded-lg hover:bg-slate-200 text-slate-400 transition-colors"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6">
+              <p className="text-sm text-slate-600 leading-relaxed">
+                Are you sure you want to clear all your chat history? This will delete all <span className="font-bold text-slate-900">{conversations.length}</span> existing conversations stored on this device.
+              </p>
+              <div className="mt-4 p-3 bg-rose-50 border border-rose-100 rounded-xl">
+                <p className="text-xs font-medium text-rose-700">
+                  This action cannot be undone. Library items saved to the server will not be affected.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 p-4 bg-slate-50 border-t border-slate-100">
+              <button
+                onClick={() => setIsClearModalOpen(false)}
+                className="flex-1 px-4 py-2.5 text-sm font-semibold text-slate-600 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-all active:scale-[0.98]"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleClearAllHistory}
+                className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-rose-600 rounded-xl hover:bg-rose-700 shadow-md shadow-rose-200 transition-all active:scale-[0.98]"
+              >
+                Clear All Chats
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

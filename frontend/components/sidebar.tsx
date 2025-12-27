@@ -1,7 +1,8 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import { StoredConversation } from "@/lib/types";
-import { Plus, MessageSquare, BookOpen, MessageCircle } from "lucide-react";
+import { Plus, MessageSquare, BookOpen, MessageCircle, MoreVertical, Trash2 } from "lucide-react";
 
 interface SidebarProps {
     conversations: StoredConversation[];
@@ -10,6 +11,7 @@ interface SidebarProps {
     onNewChat: () => void;
     onSelectChat: (id: string) => void;
     onTabChange: (tab: "chat" | "library") => void;
+    onClearChats: () => void;
 }
 
 export default function Sidebar({
@@ -19,7 +21,10 @@ export default function Sidebar({
     onNewChat,
     onSelectChat,
     onTabChange,
+    onClearChats,
 }: SidebarProps) {
+    const [showSettings, setShowSettings] = useState(false);
+
     return (
         <aside className="flex h-screen w-72 flex-col border-r border-slate-200 bg-slate-50/50 backdrop-blur-xl">
             <div className="p-4 flex flex-col gap-4">
@@ -35,8 +40,8 @@ export default function Sidebar({
                     <button
                         onClick={() => onTabChange("chat")}
                         className={`flex items-center justify-center gap-2 py-2 text-xs font-bold rounded-lg transition-all ${activeTab === "chat"
-                                ? "bg-white text-brand-600 shadow-sm"
-                                : "text-slate-500 hover:text-slate-700"
+                            ? "bg-white text-brand-600 shadow-sm"
+                            : "text-slate-500 hover:text-slate-700"
                             }`}
                     >
                         <MessageCircle className="h-4 w-4" />
@@ -45,8 +50,8 @@ export default function Sidebar({
                     <button
                         onClick={() => onTabChange("library")}
                         className={`flex items-center justify-center gap-2 py-2 text-xs font-bold rounded-lg transition-all ${activeTab === "library"
-                                ? "bg-white text-brand-600 shadow-sm"
-                                : "text-slate-500 hover:text-slate-700"
+                            ? "bg-white text-brand-600 shadow-sm"
+                            : "text-slate-500 hover:text-slate-700"
                             }`}
                     >
                         <BookOpen className="h-4 w-4" />
@@ -108,13 +113,33 @@ export default function Sidebar({
                 )}
             </div>
 
-            <div className="mt-auto border-t border-slate-200 p-4">
-                <div className="flex items-center gap-3 px-2">
-                    <div className="h-8 w-8 rounded-full bg-gradient-to-br from-brand-600 to-brand-400 shadow-sm" />
-                    <div className="flex flex-col">
-                        <span className="text-sm font-semibold text-slate-700">Researcher</span>
+            <div className="mt-auto border-t border-slate-200 p-4 relative">
+                {showSettings && (
+                    <div className="absolute bottom-full left-4 mb-2 min-w-[200px] gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-xl animate-in fade-in slide-in-from-bottom-2">
+                        <button
+                            onClick={() => {
+                                onClearChats();
+                                setShowSettings(false);
+                            }}
+                            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-rose-600 transition-colors hover:bg-rose-50"
+                        >
+                            <Trash2 className="h-4 w-4" />
+                            Clear all chats
+                        </button>
                     </div>
-                </div>
+                )}
+                <button
+                    onClick={() => setShowSettings(!showSettings)}
+                    className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-2 transition-colors hover:bg-slate-100"
+                >
+                    <div className="flex items-center gap-3">
+                        <div className="h-8 w-8 rounded-full bg-gradient-to-br from-brand-600 to-brand-400 shadow-sm" />
+                        <div className="flex flex-col">
+                            <span className="text-sm font-semibold text-slate-700">Researcher</span>
+                        </div>
+                    </div>
+                    <MoreVertical className={`h-4 w-4 text-slate-400 transition-transform ${showSettings ? "rotate-90 text-brand-600" : ""}`} />
+                </button>
             </div>
         </aside>
     );
