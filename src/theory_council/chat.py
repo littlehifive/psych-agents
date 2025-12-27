@@ -14,12 +14,16 @@ from .config import get_google_api_key
 from .gemini_store import get_or_create_store
 try:
     from langsmith import traceable
+    from langsmith.run_helpers import get_current_run_tree
 except ImportError:
     # Fallback no-op decorator if langsmith is missing
-    def traceable(op_name=None):
+    def traceable(op_name=None, **kwargs):
         def decorator(func):
             return func
         return decorator
+    
+    def get_current_run_tree():
+        return None
 
 logger = logging.getLogger("theory_council.chat")
 
@@ -33,6 +37,7 @@ class ChatResult(TypedDict, total=False):
     response: str
     messages: List[ChatMessage]
     model: str
+    usage: Dict[str, int]
     
 DEFAULT_CHAT_MODEL = "gemini-2.5-flash"
 
@@ -162,16 +167,35 @@ def generate_chat_response(
         gemini_contents.append(types.Content(role="user", parts=[types.Part(text="Hello")]))
 
     try:
+        # Report model info to LangSmith
+        run_tree = get_current_run_tree()
+        if run_tree:
+            run_tree.add_metadata({
+                "ls_provider": "google",
+                "ls_model_name": target_model
+            })
+
         response = client.models.generate_content(
             model=target_model,
             contents=gemini_contents,
             config=_prepare_gemini_config(target_model)
         )
         content = response.text
+        
+        # Extract usage
+        usage = {}
+        if hasattr(response, "usage_metadata") and response.usage_metadata:
+            usage = {
+                "prompt_tokens": response.usage_metadata.prompt_token_count,
+                "completion_tokens": response.usage_metadata.candidates_token_count,
+                "total_tokens": response.usage_metadata.total_token_count
+            }
+
         return {
             "response": content,
             "messages": [*messages, {"role": "assistant", "content": content}],
             "model": target_model,
+            "usage": usage
         }
     except Exception as e:
         logger.error("Gemini chat failed: %s", e)
@@ -207,6 +231,14 @@ async def astream_chat_response(
         gemini_contents.append(types.Content(role="user", parts=[types.Part(text="Hello")]))
 
     try:
+        # Report model info to LangSmith
+        run_tree = get_current_run_tree()
+        if run_tree:
+            run_tree.add_metadata({
+                "ls_provider": "google",
+                "ls_model_name": target_model
+            })
+
         # Use simple iteration over the stream
         config = _prepare_gemini_config(target_model)
         response_stream = client.models.generate_content_stream(
@@ -215,9 +247,27 @@ async def astream_chat_response(
             config=config
         )
         
+        last_usage = None
         for chunk in response_stream:
             if chunk.text:
                 yield chunk.text
+            if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
+                last_usage = chunk.usage_metadata
+                
+        # After stream completes, report usage to LangSmith if possible
+        if last_usage:
+            run_tree = get_current_run_tree()
+            if run_tree:
+                run_tree.end(
+                    outputs={
+                        "response": "Streaming complete",
+                        "usage": {
+                            "prompt_tokens": last_usage.prompt_token_count,
+                            "completion_tokens": last_usage.candidates_token_count,
+                            "total_tokens": last_usage.total_token_count
+                        }
+                    }
+                )
                 
     except Exception as e:
         logger.error("Gemini streaming failed: %s", e)
@@ -254,6 +304,14 @@ def organize_library_item(
     """
     
     try:
+        # Report model info to LangSmith
+        run_tree = get_current_run_tree()
+        if run_tree:
+            run_tree.add_metadata({
+                "ls_provider": "google",
+                "ls_model_name": DEFAULT_CHAT_MODEL
+            })
+
         response = client.models.generate_content(
             model=DEFAULT_CHAT_MODEL,
             contents=[prompt],
@@ -265,7 +323,16 @@ def organize_library_item(
         # Parse JSON from response
         text = response.text.strip()
         import json
-        return json.loads(text)
+        result = json.loads(text)
+        
+        # Add usage info to the result for tracing
+        if hasattr(response, "usage_metadata") and response.usage_metadata:
+            result["_usage"] = {
+                "prompt_tokens": response.usage_metadata.prompt_token_count,
+                "completion_tokens": response.usage_metadata.candidates_token_count,
+                "total_tokens": response.usage_metadata.total_token_count
+            }
+        return result
     except Exception as e:
         logger.error(f"Library organization failed: {e}")
         # Fallback logic
